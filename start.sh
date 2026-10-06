@@ -2,8 +2,10 @@
 
 set -e
 
-echo "🚀 Starting KubeAI..."
+echo "Starting KubeAI..."
 
-kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/
 
-echo "✅ KubeAI started"
+echo "KubeAI started"
+echo "Open WebUI:"
+echo "minikube service open-webui -n kubeai"
