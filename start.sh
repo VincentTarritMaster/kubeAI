@@ -4,7 +4,7 @@ set -e
 
 echo "Starting KubeAI..."
 
-kubectl apply -f k8s/
+kubectl apply -k k8s/
 
 echo "KubeAI started"
 echo "Open WebUI:"

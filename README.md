@@ -60,7 +60,7 @@ Prérequis : Docker Desktop, Minikube et kubectl. Depuis la racine du dépôt, d
 
 Le contexte attendu est minikube et le nœud doit être Ready. Applique ensuite les manifests du dossier k8s et vérifie le pod :
 
-    kubectl apply -f .\k8s\
+    kubectl apply -k .\k8s\
     kubectl get pods -n kubeai
 
 Quand le pod Open WebUI est Running, ouvre l’interface :
@@ -68,3 +68,87 @@ Quand le pod Open WebUI est Running, ouvre l’interface :
     minikube service open-webui -n kubeai --url
 
 Garde Minikube en marche pendant l’utilisation de l’adresse affichée. Le script Bash ./start.sh applique les manifests, mais ne démarre pas Minikube.
+
+## Validation locale
+
+### Démarrer Docker et Minikube
+
+Depuis un terminal PowerShell :
+
+```powershell
+docker version
+docker ps
+
+minikube start --driver=docker
+```
+
+### Vérifier Kubernetes
+
+```powershell
+kubectl config current-context
+minikube status
+kubectl get nodes
+```
+
+Résultat attendu :
+
+- contexte : `minikube` ;
+- `host` : `Running` ;
+- `kubelet` : `Running` ;
+- `apiserver` : `Running` ;
+- nœud : `Ready`.
+
+### Appliquer les manifests
+
+Depuis la racine du dépôt :
+
+```powershell
+kubectl apply -k .\k8s\
+```
+
+Vérifier les ressources et le démarrage d’Open WebUI :
+
+```powershell
+kubectl get pods -n kubeai
+kubectl get service -n kubeai
+kubectl get endpoints -n kubeai
+kubectl rollout status deployment/open-webui -n kubeai --timeout=5m
+```
+
+Pour vérifier les manifests sans les appliquer au cluster, utiliser :
+
+```powershell
+kubectl apply --dry-run=client -k .\k8s\
+```
+
+Cette commande simule l’application côté client et ne crée ni ne modifie de ressource Kubernetes.
+
+### Accéder à Open WebUI
+
+Dans un terminal séparé, démarrer le port-forward et garder ce terminal ouvert :
+
+```powershell
+kubectl port-forward -n kubeai service/open-webui 8080:80
+```
+
+Dans un autre terminal ou dans le navigateur, tester l’accès :
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8080 -UseBasicParsing
+```
+
+Résultat attendu :
+
+```text
+HTTP 200
+```
+
+L’interface est accessible à :
+
+```text
+http://127.0.0.1:8080
+```
+
+### Arrêter le tunnel
+
+Dans le terminal du port-forward, appuyer sur `Ctrl + C`.
