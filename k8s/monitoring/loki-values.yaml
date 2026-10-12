@@ -1,0 +1,3 @@
+# Notes pour de futures valeurs Helm Loki.
+# Choisir le chart et sa version avec le groupe avant de renseigner des valeurs.
+# À décider : mode, stockage, schéma, rétention, ressources et paramètres de test.
