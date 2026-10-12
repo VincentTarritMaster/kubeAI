@@ -152,3 +152,22 @@ http://127.0.0.1:8080
 ### Arrêter le tunnel
 
 Dans le terminal du port-forward, appuyer sur `Ctrl + C`.
+
+## Explication des commandes de validation
+
+| Commande | Rôle |
+|---|---|
+| `docker version` | Vérifie que Docker Desktop fonctionne. |
+| `minikube status` | Vérifie l’état du cluster Minikube. |
+| `kubectl config current-context` | Affiche le cluster Kubernetes utilisé. La valeur attendue est `minikube`. |
+| `kubectl get nodes` | Affiche les nœuds Kubernetes. Le nœud `minikube` doit être `Ready`. |
+| `kubectl apply --dry-run=client -k .\k8s\` | Vérifie les manifests sans les appliquer ni modifier le cluster. |
+| `kubectl get pods -n kubeai` | Affiche les applications du projet dans le namespace `kubeai`. |
+| `kubectl rollout status deployment/open-webui -n kubeai --timeout=5m` | Vérifie que le déploiement Open WebUI est terminé et prêt. |
+| `kubectl port-forward -n kubeai service/open-webui 8080:80` | Crée un tunnel entre le port local 8080 et Open WebUI dans Kubernetes. |
+
+Après le `port-forward`, ouvrir :
+
+http://127.0.0.1:8080
+
+Le terminal qui exécute le `port-forward` doit rester ouvert. Pour arrêter le tunnel, utiliser `Ctrl+C`.
