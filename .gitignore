@@ -1,1 +1,44 @@
-.idea
+.idea/
+
+# Documents de reference locaux : ne jamais publier.
+/notes_no_commit/
+
+# Secrets et configuration locale.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.yaml
+secrets.yml
+**/secrets.yaml
+**/secrets.yml
+
+# Environnements virtuels et dependances locales.
+.venv/
+venv/
+env/
+node_modules/
+
+# Fichiers temporaires, caches et sorties.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+tmp/
+temp/
+dist/
+build/
+coverage/
