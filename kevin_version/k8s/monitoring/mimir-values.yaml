@@ -1,0 +1,132 @@
+# ============================================
+# Mimir - Mode Monolithique (single binary)
+# Chart: grafana/mimir-distributed
+# ============================================
+
+# Désactiver tous les composants distribués
+distributor:
+  enabled: false
+ingester:
+  enabled: false
+querier:
+  enabled: false
+query_frontend:
+  enabled: false
+query_scheduler:
+  enabled: false
+ruler:
+  enabled: false
+compactor:
+  enabled: false
+store_gateway:
+  enabled: false
+alertmanager:
+  enabled: false
+overrides_exporter:
+  enabled: false
+
+# Désactiver Minio (pas de stockage objet)
+minio:
+  enabled: false
+
+# Désactiver Kafka
+kafka:
+  enabled: false
+
+# Désactiver le rollout operator
+rollout_operator:
+  enabled: false
+
+# ============================================
+# Configuration Mimir en mode monolithique
+# ============================================
+mimir:
+  structuredConfig:
+    # Mode monolithique : tous les rôles dans un seul processus
+    target: all,alertmanager
+
+    # Multi-tenancy désactivé pour simplifier
+    multitenancy_enabled: false
+
+    # Stockage filesystem (pas de S3/Minio)
+    blocks_storage:
+      backend: filesystem
+      filesystem:
+        dir: /data/mimir/blocks
+      tsdb:
+        dir: /data/mimir/tsdb
+      bucket_store:
+        sync_dir: /data/mimir/tsdb-sync
+
+    # Compactor
+    compactor:
+      data_dir: /data/mimir/compactor
+
+    # Limites
+    limits:
+      ingestion_rate_mb: 10
+      ingestion_burst_size_mb: 20
+
+    # Serveur
+    server:
+      http_listen_port: 9009
+      grpc_listen_port: 9095
+      log_level: info
+
+    # Alertmanager (intégré)
+    alertmanager:
+      data_dir: /data/mimir/alertmanager
+      enable_api: true
+
+    # Ruler (intégré)
+    ruler:
+      rule_path: /data/mimir/rules
+
+# ============================================
+# Déploiement du pod Mimir monolithique
+# ============================================
+# Utiliser le composant "singleBinary" si disponible, sinon créer un déploiement custom
+
+# Ressources pour le pod monolithique
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# Persistence
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: standard
+
+# ============================================
+# Gateway (nginx) pour exposer l'API
+# ============================================
+gateway:
+  enabled: true
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# ============================================
+# Service Monitor pour Prometheus (optionnel)
+# ============================================
+serviceMonitor:
+  enabled: false
+
+# ============================================
+# Network Policy (désactivé pour simplifier)
+# ============================================
+networkPolicy:
+  enabled: false

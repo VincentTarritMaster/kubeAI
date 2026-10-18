@@ -1,0 +1,243 @@
+# ============================================
+# Grafana Alloy - Collecte métriques + logs
+# ============================================
+
+# Mode DaemonSet : un pod Alloy par nœud
+controller:
+  type: daemonset
+
+# Image Alloy
+image:
+  repository: grafana/alloy
+  tag: v1.5.0
+  pullPolicy: IfNotPresent
+
+# ============================================
+# Configuration Alloy (River syntax)
+# ============================================
+alloy:
+  configMap:
+    create: true
+    name: alloy-config
+    content: |
+      // ============================================
+      // Découverte des pods Kubernetes
+      // ============================================
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // ============================================
+      // Collecte des métriques Kubernetes (kubelet, cAdvisor)
+      // ============================================
+
+      // Métriques du kubelet (node-level)
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+
+      discovery.relabel "kubelet_metrics" {
+        targets = discovery.kubernetes.nodes.targets
+
+        rule {
+          source_labels = ["__address__"]
+          target_label  = "__address__"
+          replacement   = "kubernetes.default.svc:443"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "kubelet" {
+        targets         = discovery.relabel.kubelet_metrics.output
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+        scrape_interval = "30s"
+        scheme          = "https"
+        tls_config {
+          insecure_skip_verify = true
+          ca_file             = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        }
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        metrics_path      = "/metrics"
+      }
+
+      prometheus.scrape "kubelet_cadvisor" {
+        targets         = discovery.relabel.kubelet_metrics.output
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+        scrape_interval = "30s"
+        scheme          = "https"
+        tls_config {
+          insecure_skip_verify = true
+          ca_file             = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        }
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        metrics_path      = "/metrics/cadvisor"
+      }
+
+      // Métriques des pods (annotations prometheus.io/scrape)
+      discovery.relabel "pod_metrics" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          action        = "keep"
+          regex         = "true"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+          target_label  = "__metrics_path__"
+          action        = "replace"
+          regex         = "(.+)"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port", "__address__"]
+          target_label  = "__address__"
+          action        = "replace"
+          regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+          replacement   = "$1:$2"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      prometheus.scrape "pods" {
+        targets         = discovery.relabel.pod_metrics.output
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+        scrape_interval = "30s"
+      }
+
+      // ============================================
+      // Remote Write vers Mimir
+      // ============================================
+      prometheus.remote_write "mimir" {
+        endpoint {
+          url = "http://mimir.monitoring.svc:9009/api/v1/push"
+
+          tls_config {
+            insecure_skip_verify = true
+          }
+        }
+      }
+
+      // ============================================
+      // Collecte des logs des pods
+      // ============================================
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          target_label  = "__path__"
+          replacement   = "/var/log/pods/*$1/*.log"
+          separator     = "/"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+      }
+
+      local.file_match "pod_logs" {
+        path_targets = discovery.relabel.pod_logs.output
+      }
+
+      loki.source.file "pod_logs" {
+        targets    = local.file_match.pod_logs.targets
+        forward_to = [loki.write.loki.receiver]
+        tail_from_end = true
+      }
+
+      // ============================================
+      // Envoi des logs vers Loki
+      // ============================================
+      loki.write "loki" {
+        endpoint {
+          url = "http://loki-gateway.monitoring.svc:80/loki/api/v1/push"
+        }
+      }
+
+      // ============================================
+      // Métriques internes d'Alloy
+      // ============================================
+      prometheus.exporter.self "alloy" {}
+
+      prometheus.scrape "alloy" {
+        targets    = prometheus.exporter.self.alloy.targets
+        forward_to = [prometheus.remote_write.mimir.receiver]
+      }
+
+  # Ressources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ============================================
+# RBAC - Alloy a besoin de lire les pods et nœuds
+# ============================================
+rbac:
+  create: true
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  name: alloy
+
+# ============================================
+# Volumes pour accéder aux logs des pods
+# ============================================
+extraVolumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+
+extraVolumeMounts:
+  - name: varlog
+    mountPath: /var/log
+    readOnly: true
+  - name: varlibdockercontainers
+    mountPath: /var/lib/docker/containers
+    readOnly: true
+
+# ============================================
+# Service pour l'UI Alloy (debug)
+# ============================================
+service:
+  enabled: true
+  type: ClusterIP
+  port: 12345
