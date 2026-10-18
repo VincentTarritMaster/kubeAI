@@ -36,7 +36,7 @@ Les incidents précis, questions de démonstration et critères chiffrés figura
 
 Les **traces distribuées** sont exclues du périmètre du sujet. La **remédiation automatique** reste une question ouverte dans le PDF : le groupe doit décider si l’assistant se limite à des recommandations ou peut agir, après examen des droits et des risques. Aucun mécanisme de remédiation n’est retenu à ce stade.
 
-Minikube avec le pilote Docker est l’environnement local commun du groupe. Le fournisseur cloud, le LLM, la pile exacte de collecte, les seuils, les scénarios et les critères de validation restent à décider collectivement. Exoscale a été proposé comme fournisseur cloud dans les échanges du groupe ; ce choix ne constitue pas une exigence du professeur.
+Minikube avec le pilote Docker est l’environnement local commun du groupe. La collecte locale utilise Prometheus, Loki, Alloy et kube-state-metrics. Le chat utilise désormais Apertus 8B auto-hébergé sur le Mac avec llama.cpp/Metal. Le fournisseur cloud, l'hébergement du modèle en cloud, les seuils, les scénarios et les critères de validation restent à décider collectivement. Exoscale a été proposé comme fournisseur cloud dans les échanges du groupe ; ce choix ne constitue pas une exigence du professeur.
 
 ## Livrables et échéance
 
@@ -58,16 +58,104 @@ Prérequis : Docker Desktop, Minikube et kubectl. Depuis la racine du dépôt, d
     kubectl config current-context
     kubectl get nodes
 
-Le contexte attendu est minikube et le nœud doit être Ready. Applique ensuite les manifests du dossier k8s et vérifie le pod :
+Pour le chat complet sur macOS Apple Silicon, installer Apertus puis déployer :
+
+```bash
+bash scripts/start-local-ai.sh
+```
+
+Cette première installation télécharge 5,06 Go de poids. Les lancements suivants
+réutilisent le cache via `./start.sh`. Voir [Apertus et Open WebUI](llm/README.md)
+pour les ressources, la provenance, l'arrêt du modèle et les autres hébergements.
+
+Le contexte attendu est minikube et le nœud doit être Ready. Avec Bash, `./start.sh`
+construit l'image de l'agent dans Minikube, applique tous les manifests et attend
+les déploiements. Pour utiliser directement kubectl (notamment dans PowerShell),
+construire d'abord l'image :
+
+    minikube image build -t kubeai-agent:0.1.0 ./agent
+
+Appliquer ensuite les manifests et vérifier les pods applicatifs et de monitoring :
 
     kubectl apply -k .\k8s\
     kubectl get pods -n kubeai
+    kubectl get pods -n monitoring
 
 Quand le pod Open WebUI est Running, ouvre l’interface :
 
     minikube service open-webui -n kubeai --url
 
-Garde Minikube en marche pendant l’utilisation de l’adresse affichée. Le script Bash ./start.sh applique les manifests, mais ne démarre pas Minikube.
+Garde Minikube en marche pendant l’utilisation de l’adresse affichée. Le script Bash
+`./start.sh` cible explicitement le contexte `minikube`, construit l'image et
+redémarre l'agent, applique les manifests et attend les déploiements, mais ne démarre
+pas Minikube. Pour un autre contexte passé en argument, l'image de l'agent doit être
+préparée et accessible au cluster ; le script ne la construit pas dans Minikube.
+
+## Collecte des métriques et des logs
+
+Le dossier [k8s/monitoring](k8s/monitoring/README.md) contient l'installation Kustomize,
+les configurations, les droits RBAC et le stockage persistant. Alloy envoie les
+métriques CPU/mémoire et l'état des pods dans Prometheus, et les logs dans Loki.
+L'agent utilise Prometheus pour les métriques et Loki pour les logs. Il transmet
+une observation récente à Apertus pour préparer les réponses du chat.
+
+Après le déploiement, vérifier la collecte complète avec Python 3 :
+
+```bash
+python3 scripts/verify-observability.py --context minikube
+```
+
+Le test crée un pod temporaire, retrouve ses mesures dans Prometheus et son message
+unique dans Loki, puis supprime le pod. Sous Windows, utiliser `python` si nécessaire.
+Les services de monitoring restent internes au cluster ; voir leur README pour
+les tunnels locaux et les exemples de requêtes.
+
+## API de l'agent
+
+Le backend FastAPI dans [agent/](agent/README.md) expose `GET /cluster/status` :
+inventaire des pods de `kubeai`, disponibilité, erreurs, redémarrages, CPU et mémoire.
+Les données absentes et pannes des sources sont signalées explicitement.
+
+```bash
+kubectl --context minikube port-forward -n kubeai service/kubeai-agent 8000:8000
+```
+
+Consulter <http://127.0.0.1:8000/cluster/status> ou la documentation interactive
+<http://127.0.0.1:8000/docs>. Voir le [contrat API](docs/api-contract.md) pour le
+périmètre et les unités. `POST /diagnose` retourne une analyse avec les observations,
+et `/v1/chat/completions` fournit le streaming utilisé par Open WebUI.
+
+## Chat avec Apertus local
+
+Open WebUI est préconfiguré pour le modèle **kubeai-apertus** servi par l'agent.
+Après le démarrage, ouvrir <http://127.0.0.1:8080> avec le tunnel habituel et poser :
+
+> Quels pods ont un problème dans kubeai ? Appuie ta réponse sur les données disponibles.
+
+Le modèle tourne sur le Mac, sans envoi de la conversation à un fournisseur cloud.
+Les réponses portent sur `kubeai`, jusqu'à 20 pods et un extrait borné des logs
+récents. Les données manquantes sont indiquées. Les conversations sont conservées
+sur le PVC Open WebUI ; l'agent n'exécute aucune remédiation.
+
+Pour créer un incident simulé et demander au chat de l'identifier :
+
+```bash
+./start-failure.sh
+```
+
+Le manifeste est dans [k8s/demo/failure-pod.yaml](k8s/demo/failure-pod.yaml), hors du
+déploiement normal. Le script attend l'état `Failed`, affiche les logs et laisse le pod visible pour
+l'assistant. Il termine volontairement avec le code `42`, sans redémarrage et sans
+vérifier réellement une variable ou une base de données. Poser la question dans
+les dix minutes, fenêtre des logs transmise au modèle. Pour supprimer ce pod :
+
+```bash
+./stop-failure.sh
+```
+
+Les deux scripts ciblent `minikube` par défaut et acceptent un autre contexte en
+premier argument. Relancer le démarrage conserve le pod existant ; pour rejouer
+l'incident avec de nouveaux logs, exécuter l'arrêt puis le démarrage.
 
 ## Validation locale
 
@@ -103,6 +191,7 @@ Résultat attendu :
 Depuis la racine du dépôt :
 
 ```powershell
+minikube image build -t kubeai-agent:0.1.0 ./agent
 kubectl apply -k .\k8s\
 ```
 
@@ -110,9 +199,15 @@ Vérifier les ressources et le démarrage d’Open WebUI :
 
 ```powershell
 kubectl get pods -n kubeai
+kubectl get pods -n monitoring
 kubectl get service -n kubeai
 kubectl get endpoints -n kubeai
 kubectl rollout status deployment/open-webui -n kubeai --timeout=5m
+kubectl rollout status deployment/kubeai-agent -n kubeai --timeout=5m
+kubectl rollout status deployment/prometheus -n monitoring --timeout=5m
+kubectl rollout status deployment/loki -n monitoring --timeout=5m
+kubectl rollout status deployment/alloy -n monitoring --timeout=5m
+kubectl rollout status deployment/kube-state-metrics -n monitoring --timeout=5m
 ```
 
 Pour vérifier les manifests sans les appliquer au cluster, utiliser :

@@ -3,3 +3,9 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - open-webui.yaml
+  - open-webui-storage.yaml
+  - agent-rbac.yaml
+  - agent-configmap.yaml
+  - agent-deployment.yaml
+  - agent-service.yaml
+  - monitoring

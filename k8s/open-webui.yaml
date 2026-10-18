@@ -5,6 +5,8 @@ metadata:
   namespace: kubeai
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: open-webui
@@ -13,6 +15,7 @@ spec:
       labels:
         app: open-webui
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:v0.11.4-slim
@@ -29,6 +32,35 @@ spec:
           env:
             - name: WEBUI_AUTH
               value: "False"
+            - name: ENABLE_OPENAI_API
+              value: "True"
+            - name: ENABLE_OLLAMA_API
+              value: "False"
+            - name: OPENAI_API_BASE_URL
+              value: http://kubeai-agent.kubeai.svc.cluster.local:8000/v1
+            - name: OPENAI_API_KEY
+              value: kubeai-local
+            - name: DEFAULT_MODELS
+              value: kubeai-apertus
+            - name: ENABLE_PERSISTENT_CONFIG
+              value: "False"
+            - name: DEFAULT_LOCALE
+              value: en-US
+            - name: ENABLE_TITLE_GENERATION
+              value: "False"
+            - name: ENABLE_TAGS_GENERATION
+              value: "False"
+            - name: ENABLE_FOLLOW_UP_GENERATION
+              value: "False"
+            - name: DEFAULT_PROMPT_SUGGESTIONS
+              value: '[{"title":["Namespace health","Pods and resources"],"content":"What is the current state of the kubeai namespace? Support your answer with the available metrics."},{"title":["Investigate an incident","Errors and recent logs"],"content":"Which pods currently have a problem? Check their states, restarts and recent logs."}]'
+          volumeMounts:
+            - name: data
+              mountPath: /app/backend/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: open-webui-data
 ---
 apiVersion: v1
 kind: Service

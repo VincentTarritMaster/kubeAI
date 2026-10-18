@@ -1,3 +1,0 @@
-# Notes pour de futures valeurs Helm Alloy.
-# Choisir le chart et sa version avec le groupe avant de renseigner des valeurs.
-# À décider : découverte Kubernetes, collecte des logs, ressources et destination Loki.

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeai-agent
+  namespace: kubeai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeai-agent
+  template:
+    metadata:
+      labels:
+        app: kubeai-agent
+        app.kubernetes.io/part-of: kubeai
+    spec:
+      serviceAccountName: kubeai-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: kubeai-agent:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: kubeai-agent-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            timeoutSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: llm-auth
+              mountPath: /var/run/secrets/kubeai-llm
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: llm-auth
+          secret:
+            secretName: kubeai-llm
+            optional: true
+            defaultMode: 0444

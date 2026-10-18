@@ -1,0 +1,18 @@
+{
+  "model": {
+    "name": "Apertus-8B-Instruct-2509-Q4_K_M.gguf",
+    "url": "https://huggingface.co/unsloth/Apertus-8B-Instruct-2509-GGUF/resolve/61c32783830424ac7a6d0fd80d4166e29dbaee06/Apertus-8B-Instruct-2509-Q4_K_M.gguf",
+    "sha256": "87e7f0eb5a1d33e1a8ea4e7fdd2363764e0465061dd92962e0073aec31a7944d",
+    "size": 5057885440,
+    "upstream": "swiss-ai/Apertus-8B-Instruct-2509",
+    "quantization": "Q4_K_M (conversion Unsloth)"
+  },
+  "runtime": {
+    "version": "b11669",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11669/llama-b11669-bin-macos-arm64.tar.gz",
+    "sha256": "dbed55493d72bc1ba2babc8770d669c2289b5bc4ee9fb2a4dfc158d45b7d13fd"
+  },
+  "alias": "apertus-8b",
+  "port": 11435,
+  "context_size": 8192
+}

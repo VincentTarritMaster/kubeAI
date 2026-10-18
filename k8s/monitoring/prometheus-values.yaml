@@ -1,3 +1,0 @@
-# Notes pour de futures valeurs Helm Prometheus.
-# Choisir le chart et sa version avec le groupe avant de renseigner des valeurs.
-# À décider : composants actifs, ressources, stockage, rétention et cibles à surveiller.
