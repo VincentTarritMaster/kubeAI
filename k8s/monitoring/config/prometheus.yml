@@ -1,0 +1,5 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+# Alloy réalise les scrapes et envoie les échantillons à /api/v1/write.
+scrape_configs: []

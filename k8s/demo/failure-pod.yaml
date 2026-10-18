@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubeai-demo-failure
+  namespace: kubeai
+  labels:
+    kubeai-demo: manual-failure
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 120
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: demo
+      image: busybox:1.37.0
+      command:
+        - sh
+        - -c
+        - >-
+          echo 'KUBEAI_DEMO_FAILURE simulated incident: required DEMO_DATABASE_URL is absent';
+          echo 'KUBEAI_DEMO_FAILURE simulation only: no environment or database check was performed';
+          echo 'KUBEAI_DEMO_FAILURE stopping intentionally with exit code 42';
+          exit 42
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          cpu: 50m
+          memory: 32Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]

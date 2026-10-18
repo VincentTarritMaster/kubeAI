@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeai-agent-config
+  namespace: kubeai
+data:
+  KUBERNETES_NAMESPACE: kubeai
+  PROMETHEUS_URL: http://prometheus.monitoring.svc.cluster.local:9090
+  UPSTREAM_TIMEOUT_SECONDS: "5"
+  METRICS_MAX_AGE_SECONDS: "60"
+  LOKI_URL: http://loki.monitoring.svc.cluster.local:3100
+  LLM_BASE_URL: http://host.minikube.internal:11435/v1
+  LLM_MODEL: apertus-8b
+  LLM_TIMEOUT_SECONDS: "180"
+  LLM_API_KEY_FILE: /var/run/secrets/kubeai-llm/api-key

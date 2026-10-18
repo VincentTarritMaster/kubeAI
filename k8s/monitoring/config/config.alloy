@@ -1,0 +1,117 @@
+logging {
+  level = "info"
+}
+
+// Une seule réplique découvre tous les pods et nœuds, sans montage de l'hôte.
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "pod_logs" {
+  targets = discovery.kubernetes.pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_node_name"]
+    target_label  = "node"
+  }
+  rule {
+    target_label = "job"
+    replacement  = "kubernetes-pods"
+  }
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pod_logs.output
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+  }
+}
+
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+// Le proxy de l'API fournit cAdvisor avec un certificat vérifié et le token du SA.
+discovery.relabel "cadvisor" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    target_label = "__address__"
+    replacement  = "kubernetes.default.svc:443"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "__metrics_path__"
+    replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "node"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "instance"
+  }
+}
+
+prometheus.scrape "cadvisor" {
+  targets         = discovery.relabel.cadvisor.output
+  forward_to      = [prometheus.relabel.cadvisor.receiver]
+  job_name        = "kubernetes-cadvisor"
+  scheme          = "https"
+  scrape_interval = "15s"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  tls_config {
+    ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  }
+}
+
+// Garder les signaux utiles au diagnostic et limiter les séries en local.
+prometheus.relabel "cadvisor" {
+  forward_to = [prometheus.remote_write.local.receiver]
+  rule {
+    source_labels = ["__name__"]
+    regex = "up|scrape_.*|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_memory_rss|container_network_receive_bytes_total|container_network_transmit_bytes_total|container_fs_usage_bytes|container_start_time_seconds"
+    action = "keep"
+  }
+}
+
+prometheus.scrape "kube_state_metrics" {
+  targets = [{"__address__" = "kube-state-metrics.monitoring.svc.cluster.local:8080"}]
+  forward_to = [prometheus.remote_write.local.receiver]
+  job_name = "kube-state-metrics"
+  scrape_interval = "15s"
+}
+
+prometheus.scrape "monitoring" {
+  targets = [
+    {"__address__" = "prometheus.monitoring.svc.cluster.local:9090", "component" = "prometheus"},
+    {"__address__" = "loki.monitoring.svc.cluster.local:3100", "component" = "loki"},
+    {"__address__" = "127.0.0.1:12345", "component" = "alloy"},
+  ]
+  forward_to = [prometheus.remote_write.local.receiver]
+  job_name = "monitoring"
+  scrape_interval = "30s"
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+  }
+}
