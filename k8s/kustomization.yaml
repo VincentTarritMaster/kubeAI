@@ -9,3 +9,4 @@ resources:
   - agent-deployment.yaml
   - agent-service.yaml
   - monitoring
+  - monitoring/rbac-kubeai.yaml

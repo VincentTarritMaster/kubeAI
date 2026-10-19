@@ -2,9 +2,13 @@ logging {
   level = "info"
 }
 
-// Une seule réplique découvre tous les pods et nœuds, sans montage de l'hôte.
+// Une seule réplique découvre les pods de kubeai, sans montage de l'hôte.
 discovery.kubernetes "pods" {
   role = "pod"
+
+  namespaces {
+    names = ["kubeai"]
+  }
 }
 
 discovery.relabel "pod_logs" {
@@ -95,55 +99,6 @@ prometheus.scrape "annotated_pods" {
   forward_to      = [prometheus.remote_write.local.receiver]
   job_name        = "kubernetes-pods-annotated"
   scrape_interval = "30s"
-}
-
-discovery.kubernetes "nodes" {
-  role = "node"
-}
-
-// Le proxy de l'API fournit cAdvisor avec un certificat vérifié et le token du SA.
-discovery.relabel "cadvisor" {
-  targets = discovery.kubernetes.nodes.targets
-
-  rule {
-    target_label = "__address__"
-    replacement  = "kubernetes.default.svc:443"
-  }
-  rule {
-    source_labels = ["__meta_kubernetes_node_name"]
-    target_label  = "__metrics_path__"
-    replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
-  }
-  rule {
-    source_labels = ["__meta_kubernetes_node_name"]
-    target_label  = "node"
-  }
-  rule {
-    source_labels = ["__meta_kubernetes_node_name"]
-    target_label  = "instance"
-  }
-}
-
-prometheus.scrape "cadvisor" {
-  targets         = discovery.relabel.cadvisor.output
-  forward_to      = [prometheus.relabel.cadvisor.receiver]
-  job_name        = "kubernetes-cadvisor"
-  scheme          = "https"
-  scrape_interval = "15s"
-  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-  tls_config {
-    ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-  }
-}
-
-// Garder les signaux utiles au diagnostic et limiter les séries en local.
-prometheus.relabel "cadvisor" {
-  forward_to = [prometheus.remote_write.local.receiver]
-  rule {
-    source_labels = ["__name__"]
-    regex = "up|scrape_.*|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_memory_rss|container_network_receive_bytes_total|container_network_transmit_bytes_total|container_fs_usage_bytes|container_start_time_seconds"
-    action = "keep"
-  }
 }
 
 prometheus.scrape "kube_state_metrics" {

@@ -2,12 +2,16 @@
 
 Cette pile est déployée dans le namespace `monitoring` par Kustomize. Elle est
 incluse dans `kubectl apply -k k8s/` ; Helm n'est pas nécessaire.
+Le Role Alloy de lecture des pods/logs est défini séparément dans
+`monitoring/rbac-kubeai.yaml` et inclus par la Kustomization racine afin de
+conserver son namespace `kubeai`. Pour un déploiement partiel depuis
+`k8s/monitoring`, appliquer aussi ce manifeste séparément.
 
 | Composant | Version | Rôle |
 |---|---|---|
 | Mimir monolithique | 3.2.1 | Stockage et API compatible Prometheus/PromQL des métriques |
 | Loki | 3.7.8 | Stockage et API LogQL des logs |
-| Alloy | 1.20.1 | Découverte des pods/nœuds, collecte et expédition |
+| Alloy | 1.20.1 | Découverte des pods de `kubeai`, collecte et expédition |
 | kube-state-metrics | 2.20.0 | État, disponibilité et redémarrages des workloads |
 
 Mimir est le stockage de métriques du tronc commun kubeAI de Kevin, Vincent et
@@ -24,33 +28,30 @@ tests HTTP simulés ; fonctionnement réel sur Kubernetes non vérifié pendant 
 sur une machine adaptée. Le poste Windows de 8 Go est réservé aux tests
 légers, sans démarrage de Docker, Minikube, Mimir ou LLM.
 
-La syntaxe de `config/config.alloy` reste à valider avec le binaire officiel
-Grafana Alloy : celui-ci n'est pas installé dans l'environnement de contrôle et
-aucun téléchargement n'a été effectué. Le rendu Kustomize ne valide pas cette
-syntaxe. Avant déploiement, exécuter `alloy validate` sur ce fichier avec la
-version Alloy prévue (1.20.1), puis conserver le résultat dans le suivi de
-validation.
+Le binaire Alloy n'est pas installé sur Windows. Le rendu Kustomize ne valide
+pas la syntaxe Alloy ; utiliser `alloy validate` avec la version 1.20.1 ou
+confirmer le chargement dans le pod Alloy avant de considérer la configuration
+validée.
 
 ## Circulation des données
 
 ```text
-Kubelet/cAdvisor ──────┐
-kube-state-metrics ───┼── Alloy ── remote_write ── Mimir ── PromQL ── FastAPI
-Services monitoring ─┘
-Logs des pods ─────────── Alloy ── push ────────── Loki ── LogQL ── FastAPI
+kube-state-metrics ─────── Alloy ── remote_write ── Mimir ── PromQL ── FastAPI
+Pods annotés de kubeai ─── Alloy ────────────────┘
+Logs des pods kubeai ───── Alloy ── push ───────── Loki ── LogQL ── FastAPI
 ```
 
-Alloy découvre tous les nœuds et pods. Les métriques cAdvisor sont lues via le
-proxy de l'API Kubernetes, avec token de ServiceAccount et validation du certificat.
-La sélection conserve CPU, mémoire, réseau, disque et démarrage des conteneurs.
-Les scrapes des workloads sont effectués toutes les 15 secondes, ceux des
-services de monitoring toutes les 30 secondes. Aucun addon metrics-server n'est requis.
+Alloy ne découvre que les pods du namespace `kubeai`. Les métriques applicatives
+restent opt-in via annotations Prometheus. kube-state-metrics expose l'état des
+pods, nœuds, namespaces et contrôleurs. Les scrapes de workloads et de
+kube-state-metrics sont effectués toutes les 15 secondes, ceux des services de
+monitoring toutes les 30 secondes. Aucun addon metrics-server n'est requis.
 
-Les logs stdout/stderr sont suivis via l'API Kubernetes, sans conteneur privilégié
-ni montage du système de fichiers de l'hôte. Loki reçoit les labels `namespace`,
-`pod`, `container`, `node` et `job`. Une seule réplique Alloy collecte le cluster ;
-augmenter simplement ce nombre dupliquerait les données. Pour plusieurs collecteurs,
-configurer d'abord le clustering/sharding.
+Les logs stdout/stderr des pods `kubeai` sont suivis via l'API Kubernetes, sans
+conteneur privilégié ni montage du système de fichiers de l'hôte. Loki reçoit les
+labels `namespace`, `pod`, `container`, `node` et `job`. Une seule réplique Alloy
+collecte ce namespace ; augmenter simplement ce nombre dupliquerait les données.
+Pour plusieurs collecteurs, configurer d'abord le clustering/sharding.
 
 ## Installation
 
@@ -258,8 +259,13 @@ curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
   de 8 Go. Ces valeurs initiales doivent être mesurées sur la machine de test ;
   elles ne garantissent pas l'absence d'OOM ni la tenue en charge.
 - Les ServiceAccounts ne lisent pas les Secrets et ne modifient pas les workloads.
-  Alloy peut lire les logs de tous les namespaces et accéder à `nodes/proxy` pour
-  cAdvisor ; ce droit donne accès au proxy kubelet et doit rester réservé au collecteur.
+  Alloy lit les pods et leurs logs uniquement dans `kubeai`. Aucun droit
+  `nodes/proxy` n'est accordé. cAdvisor est désactivé : les métriques
+  `container_cpu_usage_seconds_total`, `container_memory_working_set_bytes`,
+  `container_memory_rss`, `container_network_*`, `container_fs_usage_bytes` et
+  `container_start_time_seconds` ne sont donc pas collectées. KSM fournit toujours
+  les métriques d'état Kubernetes, mais pas les mesures détaillées d'utilisation
+  des conteneurs.
 - Les services sont internes (`ClusterIP`), sans authentification applicative.
   Les autres pods du cluster peuvent les joindre : ce profil est destiné au
   développement local sur cluster de confiance. Avant une exposition cloud, prévoir

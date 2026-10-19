@@ -3,31 +3,6 @@ kind: ServiceAccount
 metadata:
   name: alloy
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kubeai-monitoring-alloy
-rules:
-  - apiGroups: [""]
-    resources: [nodes, pods]
-    verbs: [get, list, watch]
-  - apiGroups: [""]
-    resources: [pods/log, nodes/proxy]
-    verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kubeai-monitoring-alloy
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kubeai-monitoring-alloy
-subjects:
-  - kind: ServiceAccount
-    name: alloy
-    namespace: monitoring
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
