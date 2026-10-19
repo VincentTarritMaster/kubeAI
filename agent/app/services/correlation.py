@@ -55,6 +55,7 @@ def assess(report, metrics):
     """Qualitative rules; thresholds are local heuristics, never causal proof."""
     namespace, pod = report["namespace"], report["pod"]
     cpu = _points(metrics, "cpu_cores", namespace, pod)
+    app_cpu = _points(metrics, "app_cpu_cores", namespace, pod)
     memory = _points(metrics, "memory_working_set_bytes", namespace, pod)
     restarts = _points(metrics, "restart_count", namespace, pod)
     cpu_limits = _points(metrics, "cpu_limit_cores", namespace, pod)
@@ -142,6 +143,45 @@ def assess(report, metrics):
                 "limitée : corrélation temporelle, sans preuve de causalité",
                 ["Autre activité du conteneur pendant la même fenêtre"], [],
                 ["Comparer les séries CPU avant, pendant et après le marqueur de charge."]))
+
+    incident_markers = [e for e in logs if "KUBEAI_DEMO_INCIDENT" in e["observation"]]
+    start_marker = next((e for e in incident_markers if "phase=anomaly_start" in e["observation"]), None)
+    recovery_marker = next((e for e in incident_markers if "phase=recovered" in e["observation"]), None)
+    if start_marker and app_cpu:
+        start_time = datetime.fromisoformat(start_marker["timestamp"].replace("Z", "+00:00")).timestamp()
+        recovery_time = (datetime.fromisoformat(recovery_marker["timestamp"].replace("Z", "+00:00")).timestamp()
+                         if recovery_marker else None)
+        baseline = next((p for p in reversed(app_cpu) if p.timestamp < start_time), None)
+        anomaly_samples = [p for p in app_cpu if p.timestamp >= start_time and
+                           (recovery_time is None or p.timestamp <= recovery_time)]
+        peak = max(anomaly_samples, key=lambda p: p.value, default=None)
+        if baseline and peak and peak.value >= max(baseline.value * 2, baseline.value + 0.01):
+            proof = [_evidence(start_marker), _point_evidence(report, "app_cpu_cores", baseline.timestamp),
+                     _point_evidence(report, "app_cpu_cores", peak.timestamp)]
+            if recovery_marker:
+                proof.append(_evidence(recovery_marker))
+                after_recovery = next((p for p in app_cpu if p.timestamp >= recovery_time
+                                       and p.timestamp <= recovery_time + 90), None)
+                if after_recovery:
+                    proof.append(_point_evidence(report, "app_cpu_cores", after_recovery.timestamp))
+                    if after_recovery.value >= peak.value:
+                        limitations.append("Un échantillon CPU après le marqueur de retour reste élevé ; le retour métrique à la base n'est pas établi.")
+                else:
+                    limitations.append("Marqueur de retour à la normale présent, mais aucun échantillon CPU postérieur ne permet de le vérifier.")
+            hypotheses.append(_hypothesis(
+                "demo_app_cpu", "Hausse du temps CPU du processus observée pendant la fenêtre d'anomalie synthétique.",
+                proof, report, "limitée : association temporelle, causalité non prouvée",
+                ["Une autre activité du processus peut contribuer à la hausse."], [],
+                ["Comparer les échantillons avant, pendant et après l'anomalie et vérifier la cadence de scrape."]
+            ))
+        else:
+            limitations.append("Le marqueur d'anomalie applicative existe, mais les échantillons CPU applicatifs ne montrent pas de hausse mesurable par rapport à la base.")
+    elif incident_markers and not app_cpu:
+        limitations.append("Marqueurs d'incident présents, mais série process_cpu_seconds_total absente ou pas encore scrappée.")
+    elif not app_cpu:
+        limitations.append("Métrique CPU applicative process_cpu_seconds_total absente ; aucune corrélation CPU applicative n'est possible.")
+    if app_cpu:
+        limitations.append("process_cpu_seconds_total mesure le temps CPU du processus ; son taux n'est ni le CPU global du conteneur ni un pourcentage de sa limite.")
 
     if cpu and cpu_limits and not latency and not marker:
         high = next((p for p in cpu if any(_near(p.timestamp, lim.timestamp) and lim.value > 0

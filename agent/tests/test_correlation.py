@@ -1,6 +1,7 @@
 """Simulated, evidence-only correlation without external HTTP."""
 
 from datetime import datetime, timezone
+import importlib.util
 import json
 from pathlib import Path
 
@@ -116,6 +117,34 @@ def test_demo_marker_and_cpu_rise_are_a_limited_hypothesis():
     assert "charge de démonstration" in item["description"]
 
 
+def test_app_process_cpu_correlates_with_incident_markers_without_claiming_container_saturation():
+    points = [point("app_cpu_cores", 10, 0.002), point("app_cpu_cores", 80, 0.08)]
+    logs = [entry("Loki", "log", 40, "KUBEAI_DEMO_INCIDENT phase=anomaly_start", "Loki start"),
+            entry("Loki", "log", 150, "KUBEAI_DEMO_INCIDENT phase=recovered", "Loki recovered")]
+    result = assess_points(points, logs=logs)
+    hypothesis = next(h for h in result["hypotheses"] if h["id"] == "demo_app_cpu")
+    assert hypothesis["confidence"].startswith("limitée")
+    assert len(hypothesis["supporting_observations"]) == 4
+    assert any("CPU global du conteneur" in text for text in result["correlation_limits"])
+    assert "causalité non prouvée" in hypothesis["confidence"]
+
+
+def test_app_cpu_absence_is_explicit_and_does_not_create_hypothesis():
+    logs = [entry("Loki", "log", 40, "KUBEAI_DEMO_INCIDENT phase=anomaly_start", "Loki start")]
+    result = assess_points(logs=logs)
+    assert not any(h["id"] == "demo_app_cpu" for h in result["hypotheses"])
+    assert result["conclusion"] == "cause indéterminée"
+    assert any("série process_cpu_seconds_total absente" in text for text in result["correlation_limits"])
+
+
+def test_app_cpu_without_pre_anomaly_baseline_is_not_correlated():
+    points = [point("app_cpu_cores", 80, 0.08)]
+    logs = [entry("Loki", "log", 40, "KUBEAI_DEMO_INCIDENT phase=anomaly_start", "Loki start")]
+    result = assess_points(points, logs=logs)
+    assert not any(h["id"] == "demo_app_cpu" for h in result["hypotheses"])
+    assert result["conclusion"] == "cause indéterminée"
+
+
 def test_temporally_distant_marker_does_not_support_cpu_hypothesis():
     points = [point("cpu_cores", 10, 0.01), point("cpu_cores", 800, 0.17)]
     logs = [entry("Loki", "log", 40, "KUBEAI_DEMO_CPU_LOAD start", "Loki marker")]
@@ -150,7 +179,9 @@ def make_client(*, kube_code=200, mimir_code=200, loki_code=200, key="", llm_cod
         if mimir_code != 200:
             return httpx.Response(mimir_code)
         query = request.url.params["query"]
-        if "container_cpu_usage_seconds_total" in query:
+        if "process_cpu_seconds_total" in query:
+            values = [] if missing_cpu else [[FIRST + 10, "0.002"], [FIRST + 80, "0.17"]]
+        elif "container_cpu_usage_seconds_total" in query:
             values = [] if missing_cpu else [[FIRST + 10, "0.01"], [FIRST + 80, "0.17"]]
         elif "container_memory_working_set_bytes" in query:
             values = [[FIRST + 80, "10485760"]]
@@ -214,10 +245,12 @@ def test_json_sse_diagnose_and_no_paid_call_without_key():
     assert "demo_cpu_activity" in text and "demo_cpu_activity" in streamed
     assert diagnosed.json()["observation"]["scope"] == "correlation"
     assert diagnosed.json()["observation"]["hypotheses"][0]["id"] == "demo_cpu_activity"
-    assert len(calls["mimir"]) == 15 and len(calls["loki"]) == 3 and calls["llm"] == []
-    queries = [call.url.params["query"] for call in calls["mimir"][:5]]
+    assert len(calls["mimir"]) == 18 and len(calls["loki"]) == 3 and calls["llm"] == []
+    queries = [call.url.params["query"] for call in calls["mimir"]]
     assert any("kube_pod_container_status_restarts_total" in query for query in queries)
-    assert sum("kube_pod_container_resource_limits" in query for query in queries) == 2
+    assert any("rate(process_cpu_seconds_total" in call.url.params["query"]
+               and "[1m]" in call.url.params["query"] for call in calls["mimir"])
+    assert sum("kube_pod_container_resource_limits" in query for query in queries) == 6
 
 
 @pytest.mark.parametrize("source,option", [("loki", {"loki_code": 503}),
@@ -273,3 +306,31 @@ def test_deployable_demo_is_bounded_and_has_no_cluster_credentials():
     assert "runAsNonRoot: true" in manifest and "allowPrivilegeEscalation: false" in manifest
     assert "limits:" in manifest and "activeDeadlineSeconds: 300" in manifest
     assert "kind: ClusterRole" not in manifest and "kind: Secret" not in manifest
+
+
+def test_incident_demo_exposes_annotated_metrics_and_has_bounded_resources():
+    root = Path(__file__).resolve().parents[2] / "k8s/demo/incident"
+    pod_manifest = (root / "pod.yaml").read_text(encoding="utf-8")
+    app = (root / "app.py").read_text(encoding="utf-8")
+    assert 'prometheus.io/scrape: "true"' in pod_manifest
+    assert 'prometheus.io/port: "8080"' in pod_manifest
+    assert 'prometheus.io/path: "/metrics"' in pod_manifest
+    assert "process_cpu_seconds_total" in app and '"/metrics"' in app
+    assert 'log_phase("anomaly_start")' in app
+    assert 'log_phase("recovered")' in app
+    assert "server.shutdown()" in app
+    assert "automountServiceAccountToken: false" in pod_manifest
+    assert "activeDeadlineSeconds: 300" in pod_manifest
+    assert "memory: 64Mi" in pod_manifest and "cpu: 100m" in pod_manifest
+    assert "nodes/proxy" not in pod_manifest
+
+
+def test_incident_application_emits_prometheus_process_cpu_counter():
+    path = Path(__file__).resolve().parents[2] / "k8s/demo/incident/app.py"
+    spec = importlib.util.spec_from_file_location("kubeai_demo_incident_app", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    output = module.render_metrics()
+    assert "# TYPE process_cpu_seconds_total counter" in output
+    assert output.rstrip().startswith("# HELP process_cpu_seconds_total")
+    assert float(output.splitlines()[-1].split()[-1]) >= 0

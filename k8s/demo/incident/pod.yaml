@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubeai-demo-incident
+  namespace: kubeai
+  labels:
+    kubeai-demo: incident
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: demo
+      image: python:3.12-alpine
+      imagePullPolicy: IfNotPresent
+      command: ["python", "-B", "/app/app.py"]
+      ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+      resources:
+        requests:
+          cpu: 5m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: app
+          mountPath: /app
+          readOnly: true
+  volumes:
+    - name: app
+      configMap:
+        name: kubeai-demo-incident-app

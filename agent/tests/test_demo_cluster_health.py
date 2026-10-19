@@ -39,7 +39,7 @@ def warning(*, minutes_ago=2, reason="FailedScheduling", name="web", namespace="
 
 def make_client(*, nodes=None, pods=None, events=None, key="", kube_status=None,
                 mimir_status=200, llm_status=200, llm_text='{"focus":"nodes"}',
-                mimir_empty=False, observed=None):
+                mimir_empty=False, observed=None, event_status=None):
     calls = {"kubernetes": [], "mimir": [], "llm": []}
     nodes = [node()] if nodes is None else nodes
     pods = [pod()] if pods is None else pods
@@ -49,6 +49,8 @@ def make_client(*, nodes=None, pods=None, events=None, key="", kube_status=None,
         calls["kubernetes"].append(request.url.path)
         if kube_status:
             return httpx.Response(kube_status)
+        if request.url.path == "/api/v1/events" and event_status:
+            return httpx.Response(event_status)
         items = {"/api/v1/nodes": nodes, "/api/v1/pods": pods, "/api/v1/events": events}
         assert request.url.path in items
         return httpx.Response(200, json={"metadata": {}, "items": items[request.url.path]})
@@ -161,13 +163,23 @@ def test_pending_failed_and_crashloop_pods_are_reported_across_namespaces():
     assert "CrashLoopBackOff" in text
 
 
-def test_cumulative_restart_threshold_is_explicit_without_claiming_recent_rate():
-    api, _ = make_client(pods=[pod("restarting", "other", restarts=3)])
+def test_historical_cumulative_restarts_alone_do_not_degrade_current_health():
+    api, _ = make_client(pods=[pod("restarting", "other", restarts=9)])
+    with api:
+        text = answer(chat(api))
+    assert "**État global : sain selon les contrôles effectués**" in text
+    assert "9 redémarrage(s) cumulés" in text
+    assert "compteurs cumulés sans horodatage" in text
+    assert "ne suffisent pas à établir un incident récent" in text
+
+
+def test_historical_restarts_plus_recent_warning_degrade_current_health():
+    api, _ = make_client(pods=[pod("restarting", "other", restarts=9)], events=[warning()])
     with api:
         text = answer(chat(api))
     assert "**État global : dégradé**" in text
-    assert "3 redémarrage(s) cumulés" in text
-    assert "CPU élevé" not in text
+    assert "9 redémarrage(s) cumulés" in text
+    assert "Warning FailedScheduling" in text
 
 
 def test_mimir_failure_keeps_kubernetes_diagnosis_with_limits():
@@ -189,6 +201,14 @@ def test_kubernetes_unavailable_or_forbidden_is_indeterminate(code):
     assert "Nœuds : données indisponibles" in text
     assert "Pods : données indisponibles" in text
     assert "sain selon" not in text
+
+
+def test_unavailable_recent_events_do_not_allow_a_healthy_claim():
+    api, _ = make_client(event_status=403)
+    with api:
+        text = answer(chat(api))
+    assert "**État global : indéterminé**" in text
+    assert "events : unavailable" in text
 
 
 def test_recent_warning_is_evidence_but_old_warning_is_not():

@@ -10,7 +10,6 @@ from app.clients.prometheus_client import ClusterUsage
 from app.services.privacy import redact_data
 
 WARNING_WINDOW = timedelta(minutes=15)
-RESTART_THRESHOLD = 3  # Project rule for cumulative restarts, not a recent rate.
 
 
 def cluster_health_question(chat: ChatRequest) -> bool:
@@ -67,11 +66,15 @@ def assess(inventory: ClusterInventory, usage: ClusterUsage | None, mimir_error:
 
     critical = bool(nodes and inventory.sources["nodes"].status == "ok"
                     and all(node.ready is False for node in nodes))
-    degraded = bool(bad_nodes or bad_pods or any(item["count"] >= RESTART_THRESHOLD for item in restarting)
-                    or recent_warnings)
+    # restartCount is cumulative for the current container instance. It does not
+    # indicate when a restart happened, so it is context rather than a current
+    # health signal. Current pod/node state and recent Warning events drive the
+    # classification.
+    degraded = bool(bad_nodes or bad_pods or recent_warnings)
     essential_missing = (nodes is None or pods is None or not nodes
                          or inventory.sources["nodes"].status != "ok"
                          or inventory.sources["pods"].status != "ok"
+                         or inventory.sources["events"].status != "ok"
                          or any(node.ready is None for node in nodes or [])
                          or any(pod.health == "unknown" for pod in pods or []))
     if critical:
@@ -94,6 +97,7 @@ def assess(inventory: ClusterInventory, usage: ClusterUsage | None, mimir_error:
                  "unhealthy": len(bad_pods) if pods is not None else None,
                  "affected": bad_pods[:8]},
         "restarting": restarting[:5], "restarting_total": len(restarting),
+        "restart_context": "compteur cumulé sans horodatage ; conservé comme contexte historique",
         "recent_warnings": recent_warnings[:5], "recent_warnings_total": len(recent_warnings),
         "metrics": {"cpu_cores": usage.cpu_cores if usage else None,
                     "memory_working_set_bytes": usage.memory_working_set_bytes if usage else None},
@@ -103,6 +107,13 @@ def assess(inventory: ClusterInventory, usage: ClusterUsage | None, mimir_error:
                       or usage.memory_working_set_bytes is None or usage.warnings else "ok",
                       "alerts": "not_configured"},
         "limits": limits,
+        "classification_rules": {
+            "critical": "tous les nœuds observés sont NotReady et la source nœuds est disponible",
+            "degraded": "au moins un nœud NotReady, un pod unhealthy ou un Warning dans la fenêtre récente",
+            "indeterminate": "nœuds, pods ou événements récents sont indisponibles ou incomplets sans anomalie concluante",
+            "healthy": "aucun signal actuel ou récent parmi les contrôles accessibles",
+            "historical_restarts": "les restartCount cumulés sont rapportés mais ne dégradent pas seuls l'état",
+        },
         "truncated": any(source.status == "partial" for source in inventory.sources.values()),
     }
     return redact_data(report)
@@ -118,6 +129,8 @@ def render(report: dict, *, ai_note: str) -> str:
     restarting = report["restarting"]
     lines.append(f"- Redémarrages : {report['restarting_total']} conteneur(s) avec un cumul non nul."
                  if restarting else "- Redémarrages : aucun cumul non nul observé dans les données disponibles.")
+    if restarting:
+        lines.append("- Contexte des redémarrages : compteurs cumulés sans horodatage ; ils ne suffisent pas à établir un incident récent.")
     if metrics["cpu_cores"] is None and metrics["memory_working_set_bytes"] is None:
         lines.append("- Métriques : CPU et mémoire indisponibles dans Mimir.")
     else:

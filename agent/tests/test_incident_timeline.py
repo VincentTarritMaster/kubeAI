@@ -68,9 +68,19 @@ def client(*, events=None, pods=None, key="", kube_code=200, mimir_code=200, lok
             return httpx.Response(mimir_code)
         if mimir_memory_code != 200 and "rate(" not in request.url.params["query"]:
             return httpx.Response(mimir_memory_code)
-        value = "0.25" if "rate(" in request.url.params["query"] else "10485760"
+        query = request.url.params["query"]
+        if "process_cpu_seconds_total" in query:
+            values = [[FIRST + 60, "0.08"]]
+        elif "kube_pod_container_status_restarts_total" in query:
+            values = [[FIRST + 60, "1"]]
+        elif 'resource="cpu"' in query:
+            values = [[FIRST + 60, "0.1"]]
+        elif 'resource="memory"' in query:
+            values = [[FIRST + 60, "67108864"]]
+        else:
+            values = [[FIRST + 60, "0.25" if "rate(" in query else "10485760"]]
         rows = [] if mimir_empty else [{"metric": {"namespace": "kubeai", "pod": "kubeai-demo-failure"},
-                                        "values": [[FIRST + 60, value]]} for _ in range(mimir_series)]
+                                        "values": values} for _ in range(mimir_series)]
         return httpx.Response(200, json={"status": "success", "data": {"resultType": "matrix", "result": rows}})
 
     def loki(request):
@@ -132,14 +142,16 @@ def test_combined_timeline_sorted_and_current_state_distinguished():
     assert response.status_code == 200
     report = response.json()["observation"]
     timeline = report["timeline"]
-    assert [entry["source"] for entry in timeline] == ["Kubernetes", "Loki", "Mimir", "Mimir", "Kubernetes"]
     assert [entry["timestamp"] for entry in timeline] == sorted(entry["timestamp"] for entry in timeline)
     assert {entry["type"] for entry in timeline} == {"événement", "log", "métrique"}
+    assert {entry["source"] for entry in timeline} == {"Kubernetes", "Loki", "Mimir"}
+    assert any("processus applicatif" in entry["observation"] for entry in timeline if entry["source"] == "Mimir")
+    assert any("app_cpu_cores" in entry["reference"] for entry in timeline)
     assert all(entry["reference"] and entry["resource"] for entry in timeline)
     assert report["current_pods"][0]["phase"] == "Failed"
     assert "actuels et ne prouvent pas leur état passé" in response.json()["answer"]
     assert "cause racine certaine" in response.json()["answer"]
-    assert len(calls["mimir"]) == 2 and len(calls["loki"]) == 1 and calls["llm"] == []
+    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1 and calls["llm"] == []
 
 
 @pytest.mark.parametrize("question", ["Que s'est-il passé lors de l'incident de 14 h ?",
@@ -180,6 +192,16 @@ def test_empty_window_and_expired_events_are_not_falsely_healthy():
     assert report["timeline"] == [] and report["data_status"] == "partial"
     assert "expiré" in response.json()["answer"]
     assert "Aucune observation datée" in response.json()["answer"]
+
+
+def test_incident_timeline_contains_real_source_entries_only():
+    api, _ = client(events=[], loki_lines=2)
+    with api:
+        report = api.post("/diagnose", json={"question": QUESTION}).json()["observation"]
+    assert any(item["source"] == "Loki" for item in report["timeline"])
+    assert any(item["source"] == "Mimir" for item in report["timeline"])
+    assert not any(item["source"] == "Kubernetes" for item in report["timeline"])
+    assert any("aucun événement pertinent" in warning for warning in report["missing"])
 
 
 def test_other_namespace_and_duplicate_events_are_filtered():
@@ -300,7 +322,8 @@ def test_partial_mimir_retains_cpu_samples_when_memory_query_fails():
         report = api.post("/diagnose", json={"question": QUESTION}).json()["observation"]
     assert report["sources"]["mimir"]["status"] == "partial"
     metrics = [item for item in report["timeline"] if item["source"] == "Mimir"]
-    assert len(metrics) == 1 and "CPU" in metrics[0]["observation"]
+    assert len(metrics) == 2 and all("CPU" in item["observation"] for item in metrics)
+    assert any("processus applicatif" in item["observation"] for item in metrics)
     assert not any("mémoire active" in item["observation"] for item in metrics)
 
 

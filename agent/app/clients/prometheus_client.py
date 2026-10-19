@@ -138,6 +138,8 @@ class PrometheusClient:
             target = [f'namespace={json.dumps(namespace)}', f'pod={json.dumps(pod)}']
             target_selector = ",".join(target)
             queries.update({
+                # Application process CPU is distinct from container CPU usage.
+                "app_cpu_cores": f'sum by (namespace,pod) (rate(process_cpu_seconds_total{{{target_selector}}}[1m]))',
                 "restart_count": f'sum by (namespace,pod) (kube_pod_container_status_restarts_total{{{target_selector}}})',
                 "cpu_limit_cores": f'sum by (namespace,pod) (kube_pod_container_resource_limits{{{target_selector},resource="cpu",unit="core"}})',
                 "memory_limit_bytes": f'sum by (namespace,pod) (kube_pod_container_resource_limits{{{target_selector},resource="memory",unit="byte"}})',

@@ -103,11 +103,12 @@ def build(window, inventory, metrics, logs, failures):
         for point in metrics.points:
             moment = datetime.fromtimestamp(point.timestamp, tz=timezone.utc)
             resource = "/".join(s for s in (point.labels.get("namespace"), point.labels.get("pod")) if s) or "cluster"
-            units = {"cpu_cores": "cœur(s) CPU", "memory_working_set_bytes": "octets de mémoire active",
+            units = {"cpu_cores": "cœur(s) CPU", "app_cpu_cores": "cœur(s) CPU du processus applicatif",
+                     "memory_working_set_bytes": "octets de mémoire active",
                      "restart_count": "redémarrage(s) cumulés", "cpu_limit_cores": "cœur(s) de limite CPU",
                      "memory_limit_bytes": "octets de limite mémoire"}
             unit = units.get(point.metric, point.metric)
-            value = f"{point.value:.4f}" if point.metric in {"cpu_cores", "cpu_limit_cores"} else str(round(point.value))
+            value = f"{point.value:.4f}" if point.metric in {"cpu_cores", "app_cpu_cores", "cpu_limit_cores"} else str(round(point.value))
             entries.append({"timestamp": stamp(moment), "type": "métrique", "source": "Mimir",
                             "resource": resource, "observation": f"Échantillon mesuré : {value} {unit}.",
                             "reference": f"query_range {point.metric} {resource} @ {stamp(moment)}"})
@@ -199,7 +200,9 @@ async def investigate(service, chat):
     window, error = parse_window(question)
     if error:
         return error, {"scope": "incident", "status": "clarification_required", "message": error}
-    report, _, _, _ = await collect(service, window)
+    # Include bounded KSM and application-process CPU history when available so
+    # demo B can show all real, timestamped sources in one ordered timeline.
+    report, _, _, _ = await collect(service, window, include_correlation=True)
     provider_name = service.llm.provider_name
     ai_note = f"{provider_name} indisponible ; chronologie déterministe conservée."
     if service.sensitive_values() and report["timeline"]:
