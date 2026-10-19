@@ -61,12 +61,20 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: mistral-auth
+              mountPath: /var/run/secrets/kubeai-mistral
+              readOnly: true
             - name: llm-auth
               mountPath: /var/run/secrets/kubeai-llm
               readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: mistral-auth
+          secret:
+            secretName: kubeai-mistral
+            optional: true
+            defaultMode: 0444
         - name: llm-auth
           secret:
             secretName: kubeai-llm

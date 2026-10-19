@@ -4,14 +4,14 @@ namespace: monitoring
 resources:
   - namespace.yaml
   - rbac.yaml
-  - prometheus.yaml
+  - mimir.yaml
   - loki.yaml
   - alloy.yaml
   - kube-state-metrics.yaml
 configMapGenerator:
-  - name: prometheus-config
+  - name: mimir-config
     files:
-      - prometheus.yml=config/prometheus.yml
+      - mimir.yml=config/mimir.yml
   - name: loki-config
     files:
       - loki.yml=config/loki.yml

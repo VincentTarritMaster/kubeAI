@@ -68,7 +68,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str = "kubeai-apertus"
+    model: str = "kubeai"
     messages: list[ChatMessage] = Field(min_length=1, max_length=32)
     stream: bool = False
     temperature: float = Field(default=0.2, ge=0, le=2)

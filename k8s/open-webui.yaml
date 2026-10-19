@@ -41,11 +41,11 @@ spec:
             - name: OPENAI_API_KEY
               value: kubeai-local
             - name: DEFAULT_MODELS
-              value: kubeai-apertus
+              value: kubeai
             - name: ENABLE_PERSISTENT_CONFIG
               value: "False"
             - name: DEFAULT_LOCALE
-              value: en-US
+              value: fr-FR
             - name: ENABLE_TITLE_GENERATION
               value: "False"
             - name: ENABLE_TAGS_GENERATION
@@ -53,7 +53,7 @@ spec:
             - name: ENABLE_FOLLOW_UP_GENERATION
               value: "False"
             - name: DEFAULT_PROMPT_SUGGESTIONS
-              value: '[{"title":["Namespace health","Pods and resources"],"content":"What is the current state of the kubeai namespace? Support your answer with the available metrics."},{"title":["Investigate an incident","Errors and recent logs"],"content":"Which pods currently have a problem? Check their states, restarts and recent logs."}]'
+              value: '[{"title":["Santé du namespace","Pods et ressources"],"content":"Quel est l’état actuel du namespace kubeai ? Appuie ta réponse sur les métriques disponibles."},{"title":["Analyser un incident","Erreurs et logs récents"],"content":"Quels pods ont actuellement un problème ? Vérifie leur état, les redémarrages et les logs récents."}]'
           volumeMounts:
             - name: data
               mountPath: /app/backend/data

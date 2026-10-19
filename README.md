@@ -1,12 +1,12 @@
 | Nom de l’étudiant | Identifiant GitHub | Responsabilité |
 | --- | --- | --- |
-| À compléter | À compléter | À compléter |
-| À compléter | À compléter | À compléter |
-| À compléter | À compléter | À compléter |
+| Kevin | À compléter | À compléter collectivement |
+| Vincent | À compléter | À compléter collectivement |
+| Anass | À compléter | À compléter collectivement |
 
 Document initial de travail. Les choix techniques, le périmètre détaillé et la répartition seront validés collectivement.
 
-# KubeAI — Monitoring Kubernetes clusters with AI
+# kubeAI — Monitoring Kubernetes clusters with AI
 
 ## But du projet
 
@@ -36,7 +36,7 @@ Les incidents précis, questions de démonstration et critères chiffrés figura
 
 Les **traces distribuées** sont exclues du périmètre du sujet. La **remédiation automatique** reste une question ouverte dans le PDF : le groupe doit décider si l’assistant se limite à des recommandations ou peut agir, après examen des droits et des risques. Aucun mécanisme de remédiation n’est retenu à ce stade.
 
-Minikube avec le pilote Docker est l’environnement local commun du groupe. La collecte locale utilise Prometheus, Loki, Alloy et kube-state-metrics. Le chat utilise désormais Apertus 8B auto-hébergé sur le Mac avec llama.cpp/Metal. Le fournisseur cloud, l'hébergement du modèle en cloud, les seuils, les scénarios et les critères de validation restent à décider collectivement. Exoscale a été proposé comme fournisseur cloud dans les échanges du groupe ; ce choix ne constitue pas une exigence du professeur.
+Minikube avec le pilote Docker est l’environnement local commun du groupe. Le déploiement cible de collecte utilise Alloy, Mimir, Loki et kube-state-metrics, avec le circuit **Alloy → Mimir + Loki → FastAPI → Mistral API**. Les intégrations Mimir et Mistral ont été vérifiées avec des tests et des réponses simulées ; le fonctionnement sur un vrai cluster et avec une vraie clé API reste à valider. Apertus 8B, apporté par Vincent, reste une option locale explicite. Le fournisseur cloud, les seuils, les scénarios et les critères de validation restent à décider collectivement. Exoscale a été proposé comme fournisseur cloud dans les échanges du groupe ; ce choix ne constitue pas une exigence du professeur.
 
 ## Livrables et échéance
 
@@ -52,21 +52,29 @@ Le sujet demande :
 
 ## Configuration locale
 
+Les commandes de déploiement ci-dessous sont destinées à une machine adaptée,
+utilisée par Kevin ou Vincent. Sur le poste Windows de 8 Go, limiter la validation
+aux tests du backend et au rendu des manifests, sans démarrer Docker, Minikube,
+Mimir ou un LLM. Voir [les ressources et la validation Mimir](k8s/monitoring/README.md).
+
 Prérequis : Docker Desktop, Minikube et kubectl. Depuis la racine du dépôt, démarre Minikube puis vérifie que tu utilises le bon cluster :
 
     minikube start --driver=docker
     kubectl config current-context
     kubectl get nodes
 
-Pour le chat complet sur macOS Apple Silicon, installer Apertus puis déployer :
+Le fournisseur de chat configuré est Mistral API. La création d'un Secret
+`kubeai-mistral` et la décision du groupe sur les données envoyées sont décrites
+dans [la configuration Mistral](docs/mistral-api.md). Aucun moteur local ni poids
+de modèle ne sont requis pour les tests du backend sur Windows. Sur une machine
+adaptée, le déploiement habituel reste :
 
 ```bash
-bash scripts/start-local-ai.sh
+bash start.sh minikube
 ```
 
-Cette première installation télécharge 5,06 Go de poids. Les lancements suivants
-réutilisent le cache via `./start.sh`. Voir [Apertus et Open WebUI](llm/README.md)
-pour les ressources, la provenance, l'arrêt du modèle et les autres hébergements.
+Ce script ne télécharge ni ne démarre Apertus. Voir [le profil Apertus facultatif](llm/README.md)
+pour ses ressources et ses commandes explicites.
 
 Le contexte attendu est minikube et le nœud doit être Ready. Avec Bash, `./start.sh`
 construit l'image de l'agent dans Minikube, applique tous les manifests et attend
@@ -95,9 +103,9 @@ préparée et accessible au cluster ; le script ne la construit pas dans Minikub
 
 Le dossier [k8s/monitoring](k8s/monitoring/README.md) contient l'installation Kustomize,
 les configurations, les droits RBAC et le stockage persistant. Alloy envoie les
-métriques CPU/mémoire et l'état des pods dans Prometheus, et les logs dans Loki.
-L'agent utilise Prometheus pour les métriques et Loki pour les logs. Il transmet
-une observation récente à Apertus pour préparer les réponses du chat.
+métriques CPU/mémoire et l'état des pods dans Mimir, et les logs dans Loki.
+L'agent interroge Mimir via son API compatible Prometheus/PromQL et Loki pour les logs. Il transmet
+une observation récente et limitée à Mistral API pour préparer les réponses du chat.
 
 Après le déploiement, vérifier la collecte complète avec Python 3 :
 
@@ -105,7 +113,7 @@ Après le déploiement, vérifier la collecte complète avec Python 3 :
 python3 scripts/verify-observability.py --context minikube
 ```
 
-Le test crée un pod temporaire, retrouve ses mesures dans Prometheus et son message
+Le test crée un pod temporaire, retrouve ses mesures dans Mimir et son message
 unique dans Loki, puis supprime le pod. Sous Windows, utiliser `python` si nécessaire.
 Les services de monitoring restent internes au cluster ; voir leur README pour
 les tunnels locaux et les exemples de requêtes.
@@ -125,17 +133,22 @@ Consulter <http://127.0.0.1:8000/cluster/status> ou la documentation interactive
 périmètre et les unités. `POST /diagnose` retourne une analyse avec les observations,
 et `/v1/chat/completions` fournit le streaming utilisé par Open WebUI.
 
-## Chat avec Apertus local
+## Chat avec Mistral API
 
-Open WebUI est préconfiguré pour le modèle **kubeai-apertus** servi par l'agent.
+Open WebUI est préconfiguré pour le modèle virtuel **kubeai** servi par l'agent.
 Après le démarrage, ouvrir <http://127.0.0.1:8080> avec le tunnel habituel et poser :
 
 > Quels pods ont un problème dans kubeai ? Appuie ta réponse sur les données disponibles.
 
-Le modèle tourne sur le Mac, sans envoi de la conversation à un fournisseur cloud.
+Le backend appelle Mistral API en HTTPS après avoir collecté et filtré l'observation.
+La décision sur la région d'inférence et l'utilisation de données sensibles reste à
+valider en groupe. Ne pas envoyer de données sensibles réelles avant cette décision.
 Les réponses portent sur `kubeai`, jusqu'à 20 pods et un extrait borné des logs
 récents. Les données manquantes sont indiquées. Les conversations sont conservées
-sur le PVC Open WebUI ; l'agent n'exécute aucune remédiation.
+sur le PVC Open WebUI ; l'agent n'exécute aucune remédiation. Le profil local
+Apertus et l'identifiant historique `kubeai-apertus` sont conservés pour
+compatibilité ; cet identifiant suit le fournisseur actif. Voir
+[la configuration Mistral](docs/mistral-api.md) pour la clé et les limites.
 
 Pour créer un incident simulé et demander au chat de l'identifier :
 
@@ -204,19 +217,24 @@ kubectl get service -n kubeai
 kubectl get endpoints -n kubeai
 kubectl rollout status deployment/open-webui -n kubeai --timeout=5m
 kubectl rollout status deployment/kubeai-agent -n kubeai --timeout=5m
-kubectl rollout status deployment/prometheus -n monitoring --timeout=5m
+kubectl rollout status deployment/mimir -n monitoring --timeout=5m
 kubectl rollout status deployment/loki -n monitoring --timeout=5m
 kubectl rollout status deployment/alloy -n monitoring --timeout=5m
 kubectl rollout status deployment/kube-state-metrics -n monitoring --timeout=5m
 ```
 
-Pour vérifier les manifests sans les appliquer au cluster, utiliser :
+Pour rendre les manifests sans connexion au cluster, utiliser :
 
 ```powershell
-kubectl apply --dry-run=client -k .\k8s\
+kubectl kustomize .\k8s\
 ```
 
-Cette commande simule l’application côté client et ne crée ni ne modifie de ressource Kubernetes.
+Le rendu vérifie l'assemblage Kustomize ; il ne valide pas le démarrage ni le schéma
+des configurations Mimir/Alloy. Les anciens manifests Prometheus restent dans le
+dépôt, hors du déploiement cible. `kubectl apply -k` ne supprime pas un ancien
+serveur Prometheus déjà présent dans un cluster ; son arrêt devra être organisé
+après validation de Mimir. Conserver les PVC et les données existantes ; aucun
+nettoyage automatique par `--prune` n'est prévu.
 
 ### Accéder à Open WebUI
 
@@ -256,7 +274,7 @@ Dans le terminal du port-forward, appuyer sur `Ctrl + C`.
 | `minikube status` | Vérifie l’état du cluster Minikube. |
 | `kubectl config current-context` | Affiche le cluster Kubernetes utilisé. La valeur attendue est `minikube`. |
 | `kubectl get nodes` | Affiche les nœuds Kubernetes. Le nœud `minikube` doit être `Ready`. |
-| `kubectl apply --dry-run=client -k .\k8s\` | Vérifie les manifests sans les appliquer ni modifier le cluster. |
+| `kubectl kustomize .\k8s\` | Produit le rendu des manifests sans joindre ni modifier le cluster. |
 | `kubectl get pods -n kubeai` | Affiche les applications du projet dans le namespace `kubeai`. |
 | `kubectl rollout status deployment/open-webui -n kubeai --timeout=5m` | Vérifie que le déploiement Open WebUI est terminé et prêt. |
 | `kubectl port-forward -n kubeai service/open-webui 8080:80` | Crée un tunnel entre le port local 8080 et Open WebUI dans Kubernetes. |

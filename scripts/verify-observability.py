@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vérifier la collecte réelle dans Prometheus et Loki, avec kubectl et Python 3."""
+"""Vérifier la collecte réelle dans Mimir et Loki, avec kubectl et Python 3."""
 
 import argparse
 import json
@@ -42,7 +42,7 @@ def main():
         return response["data"]["result"]
 
     def metric(query):
-        results = api("prometheus", 9090, "api/v1/query", {"query": query})
+        results = api("mimir", 9009, "prometheus/api/v1/query", {"query": query})
         if not results:
             raise RuntimeError(f"Métrique encore absente : {query}")
         value = float(results[0]["value"][1])
@@ -128,7 +128,7 @@ def main():
                     "restarts": int(restarts), "ready": True,
                     "log_sample": entries[0][1],
                     "log_timestamp_ns": entries[0][0],
-                    "sources": ["Prometheus via Alloy/cAdvisor/kube-state-metrics", "Loki via Alloy"],
+                    "sources": ["Mimir via Alloy/cAdvisor/kube-state-metrics", "Loki via Alloy"],
                     "temporary_pod": created,
                 }
                 print(json.dumps(report, indent=2, ensure_ascii=False))

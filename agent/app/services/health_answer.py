@@ -1,4 +1,4 @@
-"""Render current health facts without asking the model to reinterpret them."""
+"""Render current namespace health facts without asking a model to reinterpret them."""
 import re
 import unicodedata
 
@@ -20,7 +20,6 @@ def health_question(chat: ChatRequest):
         r"|\bpods?\b.*\b(ready|pret|prets|failed|running)\b", normalized,
     ):
         return None
-    # Keep causal investigations with Apertus; plain state questions are facts.
     if re.search(r"\b(why|cause|causes|caused|pourquoi|explique|explain)\b", normalized):
         return None
     return question
@@ -31,28 +30,48 @@ def health_answer(chat: ChatRequest, observation: dict):
     if question is None:
         return None
     summary = observation["summary"]
-    answer = f"The current Kubernetes health of namespace `{observation['namespace']}` is **{observation['health']}** [K8S]."
-    answer += f"\n\n{summary['total']} pods: {summary['ready']} Ready, {summary['unhealthy']} unhealthy; {summary['restarts']} restarts."
-    # Resolve explicit pod references from questions, never from old diagnoses.
+    lines = [
+        "### 1. État observé",
+        f"L'état Kubernetes actuel du namespace `{observation['namespace']}` est **{observation['health']}** [K8S].",
+        "",
+        "### 2. Preuves et sources",
+        f"Relevé à {observation['observed_at']} [K8S] : {summary['total']} pods, "
+        f"{summary['ready']} Ready, {summary['unhealthy']} en défaut, {summary['restarts']} redémarrages cumulés.",
+    ]
     references = re.findall(
         r"(?<!ce )(?<!this )(?<!that )\bpod\s+[`\"']?([a-z0-9]+(?:-[a-z0-9]+)+)", question, re.I,
     )
     names = {pod["name"] for pod in observation["pods"]}
     for name in dict.fromkeys(references):
         if name not in names and not observation["truncated"]:
-            answer += f"\n\nPod `{name}` is no longer present in the current inventory [K8S]."
+            lines.append(f"Le pod `{name}` ne figure plus dans l'inventaire actuel [K8S].")
     failed = [pod for pod in observation["pods"] if pod["health"] == "unhealthy"]
+    simulation = False
     for pod in failed:
         issues = "; ".join(pod["issues"])
-        answer += f"\n\n- `{pod['name']}`: **{pod['phase']}**, Ready=false"
-        if issues:
-            answer += "; " + issues
-        answer += " [K8S]."
-        logs = [entry["message"].strip() for entry in observation["logs"] if entry["pod"] == pod["name"]]
+        lines.append(f"- `{pod['name']}` : **{pod['phase']}**, Ready=false" +
+                     (f" ; {issues}" if issues else "") + " [K8S].")
+        logs = [entry for entry in observation["logs"] if entry["pod"] == pod["name"]]
         if logs:
-            answer += "\n  Recent log: " + repr(logs[0]) + " [LOGS]."
-            if any(re.search(r"\b(simulated|simulation)\b", line, re.I) for line in logs):
-                answer += "\n  The logs describe a simulation. The pod still counts as unhealthy in Kubernetes."
+            entry = logs[0]
+            lines.append(f"  Log à {entry.get('timestamp', entry['timestamp_ns'])} [LOGS] : {entry['message'].strip()!r}.")
+            simulation |= any(re.search(r"\b(simulated|simulation)\b", item["message"], re.I) for item in logs)
     if summary["unhealthy"] == 0:
-        answer += "\n\nKubernetes currently reports no unhealthy pods in this namespace. This does not establish application or cluster-wide health."
-    return answer
+        lines.append("Aucun pod en défaut n'est signalé dans ce namespace [K8S]. Cela ne démontre pas la santé du cluster entier ni de l'application.")
+    lines += ["", "### 3. Hypothèses de cause"]
+    lines.append("Les seules données présentes ne permettent pas d'établir une cause.")
+    if simulation:
+        lines.append("Un log décrit une simulation ; il ne prouve pas qu'une configuration est réellement absente. L'état Failed reste observé [K8S].")
+    lines += ["", "### 4. Informations manquantes"]
+    missing = []
+    if observation["data_status"] == "partial":
+        missing.append("certaines sources d'observation sont indisponibles ou partielles")
+    if not observation["logs"]:
+        missing.append("aucun log récent disponible")
+    if observation["truncated"]:
+        missing.append("l'inventaire est limité aux 20 premiers pods prioritaires")
+    lines.append(" ; ".join(missing).capitalize() + "." if missing else
+                 "Aucune autre preuve de cause n'est fournie par ce relevé.")
+    lines += ["", "### 5. Vérifications recommandées",
+              "Vérifier les événements et la configuration du pod concerné si un diagnostic de cause est nécessaire ; comparer avec un nouveau relevé horodaté."]
+    return "\n".join(lines)

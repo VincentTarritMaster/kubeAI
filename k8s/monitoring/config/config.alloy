@@ -101,7 +101,7 @@ prometheus.scrape "kube_state_metrics" {
 
 prometheus.scrape "monitoring" {
   targets = [
-    {"__address__" = "prometheus.monitoring.svc.cluster.local:9090", "component" = "prometheus"},
+    {"__address__" = "mimir.monitoring.svc:9009", "component" = "mimir"},
     {"__address__" = "loki.monitoring.svc.cluster.local:3100", "component" = "loki"},
     {"__address__" = "127.0.0.1:12345", "component" = "alloy"},
   ]
@@ -112,6 +112,6 @@ prometheus.scrape "monitoring" {
 
 prometheus.remote_write "local" {
   endpoint {
-    url = "http://prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+    url = "http://mimir.monitoring.svc:9009/api/v1/push"
   }
 }

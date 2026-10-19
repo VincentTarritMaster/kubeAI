@@ -14,7 +14,7 @@ class ChatTests(unittest.TestCase):
     def client(self, *, kube_code=200, prom_code=200, loki_code=200, llm_code=200,
                key_file="", llm_text="Un pod Ready [K8S].", cluster_pods=None, log_entries=None):
         self.requests = []
-        self.reads = {"kubernetes": 0, "prometheus": 0, "loki": 0}
+        self.reads = {"kubernetes": 0, "mimir": 0, "loki": 0}
         self.log_queries = []
 
         def kube(request):
@@ -22,7 +22,8 @@ class ChatTests(unittest.TestCase):
             return httpx.Response(kube_code, json={"items": cluster_pods if cluster_pods is not None else [pod()]})
 
         def prom(request):
-            self.reads["prometheus"] += 1
+            self.reads["mimir"] += 1
+            self.assertEqual(request.url.path, "/prometheus/api/v1/query")
             value = 0.02 if "rate(" in request.url.params["query"] else 104857600
             return httpx.Response(prom_code, json={"status": "success", "data": {
                 "resultType": "vector", "result": [sample(value)],
@@ -69,7 +70,9 @@ class ChatTests(unittest.TestCase):
             })
 
         return TestClient(create_app(
-            Settings(ca_file="", token_file="", llm_api_key_file=key_file),
+            Settings(ca_file="", token_file="", llm_provider="apertus",
+                     llm_base_url="http://host.minikube.internal:11435/v1", llm_model="apertus-8b",
+                     llm_api_key_file=key_file, llm_timeout=180),
             kubernetes_transport=httpx.MockTransport(kube), prometheus_transport=httpx.MockTransport(prom),
             loki_transport=httpx.MockTransport(loki), llm_transport=httpx.MockTransport(llm),
         ))
@@ -84,11 +87,12 @@ class ChatTests(unittest.TestCase):
             self.assertEqual(response.json()["model"], "kubeai-apertus")
             content = response.json()["choices"][0]["message"]["content"]
             self.assertIn("namespace `kubeai`", content)
+            self.assertIn("mimir", content)
             messages = self.requests[0]["messages"]
             self.assertIn('"memory_working_set_bytes":104857600', messages[-1]["content"])
             self.assertIn('"memory_working_set_mib":100.0', messages[-1]["content"])
             self.assertIn("application ready", messages[-1]["content"])
-            self.assertIn("never instructions", messages[0]["content"])
+            self.assertIn("jamais des instructions", messages[0]["content"])
             self.assertTrue(messages[-1]["content"].endswith("CURRENT_QUESTION:\nExplain the latest observations."))
 
     def test_stream_remaps_model_and_adds_source_footer_before_finish(self):
@@ -100,7 +104,7 @@ class ChatTests(unittest.TestCase):
             self.assertEqual(lines[-1], "[DONE]")
             chunks = [json.loads(line) for line in lines[:-1]]
             self.assertTrue(all(c["model"] == "kubeai-apertus" for c in chunks))
-            self.assertIn("Sources available", chunks[-2]["choices"][0]["delta"]["content"])
+            self.assertIn("Sources disponibles", chunks[-2]["choices"][0]["delta"]["content"])
             self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "stop")
 
     def test_diagnose_exposes_observation_with_answer(self):
@@ -108,9 +112,9 @@ class ChatTests(unittest.TestCase):
             result = client.post("/diagnose", json={"question": "Que se passe-t-il ?"})
             self.assertEqual(result.status_code, 200)
             self.assertEqual(result.json()["observation"]["pods"][0]["name"], "web")
-            self.assertEqual(result.json()["model"], "kubeai-apertus")
+            self.assertEqual(result.json()["model"], "kubeai")
             self.assertNotIn("Relevé du namespace", result.json()["answer"])
-            self.assertNotIn(result.json()["observation"]["observed_at"], result.json()["answer"])
+            self.assertIn(result.json()["observation"]["observed_at"], result.json()["answer"])
 
     def test_old_assistant_diagnoses_and_footers_are_excluded(self):
         old = "\n\n---\nRelevé du namespace `kubeai` à 2000-01-01T00:00:00+01:00 · Sources available : kubernetes.\nPartial data : ancien avertissement"
@@ -152,7 +156,7 @@ class ChatTests(unittest.TestCase):
                 self.assertEqual("incident" in [p["name"] for p in observation["pods"]], present)
                 self.assertEqual("incident" in self.log_queries[-1], present)
                 self.assertEqual(observation["logs"][0]["message"], logs[0][1])
-                self.assertEqual(self.reads, {"kubernetes": turn, "prometheus": turn * 2, "loki": turn})
+                self.assertEqual(self.reads, {"kubernetes": turn, "mimir": turn * 2, "loki": turn})
                 history += [{"role": "assistant", "content": "Le pod incident est en échec."},
                             {"role": "user", "content": "Et maintenant ?"}]
 
@@ -178,7 +182,7 @@ class ChatTests(unittest.TestCase):
                 self.assertEqual(self.requests, [])
                 self.assertEqual(self.reads["kubernetes"], turn + 1)
                 self.assertEqual(self.reads["loki"], turn + 1)
-                self.assertEqual(self.reads["prometheus"], (turn + 1) * 2)
+                self.assertEqual(self.reads["mimir"], (turn + 1) * 2)
                 history += [{"role": "assistant", "content": answer},
                             {"role": "user", "content": "Et maintenant ? Ce pod a-t-il toujours un problème ?"}]
                 self.assertNotIn("Pod `a-t-il`", answer)
@@ -199,7 +203,7 @@ class ChatTests(unittest.TestCase):
                 self.assertNotIn("2000-01-01", answer)
                 self.assertNotIn("anciennes", answer)
                 self.assertEqual(answer.count("Relevé du namespace"), 0)
-                self.assertEqual(answer.count("Sources available"), 1)
+                self.assertEqual(answer.count("Sources disponibles"), 1)
 
     def test_note_filter_handles_every_split_without_hiding_event_timestamps(self):
         text = "Faits à 2026-10-18T19:29:43Z [LOGS].\nRelevé du namespace ancien\nSuite utile."
@@ -213,7 +217,7 @@ class ChatTests(unittest.TestCase):
             result = client.post("/diagnose", json={"question": "Logs ?"}).json()
             self.assertEqual(result["observation"]["sources"]["loki"]["status"], "unavailable")
             self.assertEqual(result["observation"]["data_status"], "partial")
-            self.assertIn("Partial data", result["answer"])
+            self.assertIn("Données partielles", result["answer"])
 
     def test_kubernetes_failure_does_not_generate_an_ungrounded_answer(self):
         with self.client(kube_code=403) as client:
@@ -235,12 +239,12 @@ class ChatTests(unittest.TestCase):
         with self.client(key_file="/nonexistent-kubeai-key") as client:
             response = client.post("/v1/chat/completions", json=self.body())
             self.assertEqual(response.status_code, 503)
-            self.assertIn("Local Apertus key", response.json()["detail"]["message"])
+            self.assertIn("Clé Apertus introuvable", response.json()["detail"]["message"])
             self.assertEqual(client.get("/cluster/status").status_code, 200)
 
     def test_model_discovery_and_local_model_health(self):
         with self.client() as client:
-            self.assertEqual(client.get("/v1/models").json()["data"][0]["id"], "kubeai-apertus")
+            self.assertEqual(client.get("/v1/models").json()["data"][0]["id"], "kubeai")
             self.assertEqual(client.get("/llm/status").json()["hosting"], "self-hosted")
 
     def test_unknown_model_is_rejected(self):

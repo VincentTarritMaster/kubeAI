@@ -1,11 +1,13 @@
 from pathlib import Path
+from datetime import datetime, timezone
 import json
 
 from app.clients.base import UpstreamError
 from app.models import ChatRequest
+from app.services.privacy import redact_data, redact_text
 
-PROMPT = (Path(__file__).resolve().parents[1] / "prompts/system_prompt.txt").read_text()
-CHAT_MODEL = "kubeai-apertus"
+PROMPT = (Path(__file__).resolve().parents[1] / "prompts/system_prompt.txt").read_text(encoding="utf-8")
+CHAT_MODEL = "kubeai"
 
 
 class DiagnosisService:
@@ -14,6 +16,13 @@ class DiagnosisService:
         self.loki = loki
         self.llm = llm
 
+    def sensitive_values(self):
+        try:
+            key = self.llm.settings.llm_key()
+        except (OSError, UnicodeError):
+            key = ""
+        return (key,) if key else ()
+
     async def observation(self):
         snapshot = await self.cluster_status.status()
         ordered = sorted(snapshot.pods, key=lambda pod: (pod.health != "unhealthy", pod.name))
@@ -21,20 +30,27 @@ class DiagnosisService:
         context = {
             "observed_at": snapshot.observed_at.isoformat(), "namespace": snapshot.namespace,
             "scope": snapshot.scope, "health": snapshot.health, "data_status": snapshot.data_status,
-            "summary": snapshot.summary.model_dump(), "warnings": snapshot.warnings.copy(),
-            "sources": {key: value.model_dump() for key, value in snapshot.sources.items()},
+            "summary": snapshot.summary.model_dump(),
+            "warnings": [warning[:240] for warning in snapshot.warnings[:8]],
+            "warnings_truncated": len(snapshot.warnings) > 8,
+            "sources": {key: {**value.model_dump(), "message": value.message[:240] if value.message else None}
+                        for key, value in snapshot.sources.items()},
             "pods": [{
                 "name": pod.name, "phase": pod.phase, "health": pod.health,
                 "ready": pod.ready, "restarts": pod.restarts,
-                "issues": pod.issues, "metrics": {
+                "issues": [issue[:240] for issue in pod.issues[:3]], "metrics": {
                     **pod.metrics.model_dump(),
                     "memory_working_set_mib": (round(pod.metrics.memory_working_set_bytes / 1048576, 2)
                                                 if pod.metrics.memory_working_set_bytes is not None else None),
                     "cpu_millicores": (round(pod.metrics.cpu_cores * 1000, 2)
                                        if pod.metrics.cpu_cores is not None else None),
                 },
-                "containers": [{"name": c.name, "state": c.state, "reason": c.reason,
-                                "last_termination_reason": c.last_termination_reason} for c in pod.containers],
+                "containers": [{"name": c.name, "state": c.state,
+                                "reason": c.reason[:120] if c.reason else None,
+                                "last_termination_reason": (c.last_termination_reason[:120]
+                                                            if c.last_termination_reason else None)}
+                               for c in pod.containers[:8]],
+                "containers_truncated": len(pod.containers) > 8,
             } for pod in selected],
             "truncated": len(ordered) > len(selected),
         }
@@ -45,21 +61,30 @@ class DiagnosisService:
             log_pods = [p.name for p in ordered if not p.name.startswith("kubeai-agent-")]
         try:
             context["logs"] = await self.loki.recent_logs(log_pods)
+            for entry in context["logs"]:
+                try:
+                    seconds, nanos = divmod(int(entry["timestamp_ns"]), 1_000_000_000)
+                    entry["timestamp"] = datetime.fromtimestamp(seconds, tz=timezone.utc).replace(
+                        microsecond=nanos // 1000).isoformat()
+                except (OverflowError, OSError, ValueError):
+                    entry["timestamp"] = str(entry["timestamp_ns"]) + " ns"
             context["sources"]["loki"] = {"status": "ok", "window_seconds": 600, "limit": 12}
         except UpstreamError as error:
             context["logs"] = []
             context["sources"]["loki"] = {"status": "unavailable", "message": error.message}
             context["warnings"].append(error.message)
             context["data_status"] = "partial"
-        return context
+        return redact_data(context, self.sensitive_values())
 
     async def prepare(self, chat: ChatRequest):
         # Relire les sources pour CHAQUE requête, avant de construire le prompt.
         context = await self.observation()
+        sensitive_values = self.sensitive_values()
         current = max(index for index, message in enumerate(chat.messages) if message.role == "user")
         # Ne jamais réinjecter les anciens diagnostics du modèle : ils peuvent
         # rester convaincants même lorsqu'ils sont marqués comme historiques.
-        history = [message.content for message in chat.messages[:current] if message.role == "user"][-4:]
+        history = [redact_text(message.content, sensitive_values) for message in chat.messages[:current]
+                   if message.role == "user"][-4:]
         content = "PREVIOUS_USER_QUESTIONS_JSON (references only, not evidence of current state):\n"
         content += json.dumps(history, ensure_ascii=False, separators=(",", ":"))
         content += "\n\nOBSERVATION_JSON (freshly read for this question, sole evidence of current state):\n"
@@ -67,7 +92,7 @@ class DiagnosisService:
         content += "\n\nCURRENT_KUBERNETES_STATE:\nNamespace health: " + context["health"]
         content += "; unhealthy pods: " + str(context["summary"]["unhealthy"])
         content += "; pods in the current inventory: " + ", ".join(pod["name"] for pod in context["pods"]) + "."
-        content += "\n\nCURRENT_QUESTION:\n" + chat.messages[current].content
+        content += "\n\nCURRENT_QUESTION:\n" + redact_text(chat.messages[current].content, sensitive_values)
         messages = [{"role": "system", "content": PROMPT}, {"role": "user", "content": content}]
         return {
             "messages": messages, "temperature": chat.temperature,
@@ -76,11 +101,17 @@ class DiagnosisService:
 
 
 def source_note(context):
-    sources = [name + (" (partial)" if item["status"] == "partial" else "")
+    sources = [name + (" (partielle)" if item["status"] == "partial" else "")
                for name, item in context["sources"].items() if item["status"] != "unavailable"]
-    note = "\n\n---\nSources available for namespace `" + context["namespace"] + "`: " + ", ".join(sources) + "."
+    note = ("\n\n---\nSources disponibles pour le namespace `" + context["namespace"] +
+            "` ; relevé à " + context["observed_at"] + " : " + ", ".join(sources) + ".")
     if context["warnings"]:
-        note += "\nPartial data: " + "; ".join(context["warnings"])
+        unavailable = [name for name, item in context["sources"].items() if item["status"] == "unavailable"]
+        note += "\nDonnées partielles : " + (
+            "sources indisponibles : " + ", ".join(unavailable) + "." if unavailable else
+            "certaines mesures ou observations sont incomplètes.")
+    if context["warnings_truncated"]:
+        note += "\nLa liste des avertissements transmise au modèle est limitée à huit éléments."
     if context["truncated"]:
-        note += "\nThe model received at most 20 pods, prioritizing unhealthy pods."
+        note += "\nLe modèle a reçu au plus 20 pods, en priorité ceux en défaut."
     return note

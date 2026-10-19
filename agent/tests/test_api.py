@@ -42,6 +42,7 @@ class AgentAPITests(unittest.TestCase):
 
         def prom(request):
             self.assertEqual(request.method, "GET")
+            self.assertEqual(request.url.path, "/prometheus/api/v1/query")
             self.assertEqual(request.url.params["timeout"], "5000ms")
             query = request.url.params["query"]
             self.assertIn('job="kubernetes-cadvisor"', query)
@@ -68,6 +69,8 @@ class AgentAPITests(unittest.TestCase):
             self.assertEqual(body["namespace"], "kubeai")
             self.assertEqual(body["health"], "healthy")
             self.assertEqual(body["data_status"], "complete")
+            self.assertEqual(body["sources"]["mimir"]["status"], "ok")
+            self.assertNotIn("prometheus", body["sources"])
             self.assertEqual(body["pods"][0]["metrics"]["cpu_cores"], 0.025)
             self.assertEqual(body["pods"][0]["metrics"]["memory_working_set_bytes"], 134217728)
             self.assertEqual(client.get("/health").status_code, 200)
@@ -75,12 +78,13 @@ class AgentAPITests(unittest.TestCase):
             schema = client.get("/openapi.json").json()
             self.assertEqual(schema["paths"]["/cluster/status"]["get"]["operationId"], "get_cluster_status")
 
-    def test_prometheus_failure_preserves_pods_and_readiness(self):
+    def test_mimir_failure_preserves_pods_and_readiness(self):
         with self.client(prometheus=lambda request: httpx.Response(503)) as client:
             body = client.get("/cluster/status").json()
             self.assertEqual(body["health"], "healthy")
             self.assertEqual(body["data_status"], "partial")
-            self.assertEqual(body["sources"]["prometheus"]["status"], "unavailable")
+            self.assertEqual(body["sources"]["mimir"]["status"], "unavailable")
+            self.assertEqual(body["sources"]["mimir"]["message"], "mimir returned HTTP 503")
             self.assertIsNone(body["pods"][0]["metrics"]["cpu_cores"])
             self.assertIsNone(body["pods"][0]["metrics"]["memory_working_set_bytes"])
             self.assertEqual(client.get("/ready").status_code, 200)
@@ -178,14 +182,14 @@ class AgentAPITests(unittest.TestCase):
                 client.get("/ready")
         self.assertEqual(seen, ["Bearer first", "Bearer second"])
 
-    def test_prometheus_warnings_and_invalid_samples_are_visible(self):
+    def test_mimir_warnings_and_invalid_samples_are_visible(self):
         def warned(request):
             return httpx.Response(200, json={"status": "success", "warnings": ["partial scrape"], "data": {
                 "resultType": "vector", "result": [sample("NaN")],
             }})
         with self.client(prometheus=warned) as client:
             body = client.get("/cluster/status").json()
-            self.assertEqual(body["sources"]["prometheus"]["status"], "partial")
+            self.assertEqual(body["sources"]["mimir"]["status"], "partial")
             self.assertIn("partial scrape", body["warnings"])
             self.assertIsNone(body["pods"][0]["metrics"]["cpu_cores"])
 

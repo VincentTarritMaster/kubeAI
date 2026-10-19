@@ -1,25 +1,31 @@
-# API de l'agent KubeAI — version 0.2.0
+# API de l'agent kubeAI — version 0.2.0
 
 L'API est accessible dans le cluster à `http://kubeai-agent.kubeai.svc.cluster.local:8000`.
 Elle est en lecture seule et limitée au namespace configuré (`kubeai` par défaut).
 Le contrat complet est généré par FastAPI sur `/openapi.json`, avec interface `/docs`.
+
+Les métriques sont lues dans Mimir avec le client compatible Prometheus existant.
+`MIMIR_URL` contient la base `http://mimir.monitoring.svc:9009/prometheus` ; les
+requêtes instantanées utilisent ainsi `/prometheus/api/v1/query`. La variable
+`PROMETHEUS_URL` reste acceptée en repli pour les configurations antérieures.
 
 | Méthode | Route | Rôle prévu |
 |---|---|---|
 | GET | `/health` | 200 si le processus répond ; aucune dépendance interrogée |
 | GET | `/ready` | 200 si l'agent peut lister les pods ; 503 sinon |
 | GET | `/cluster/status` | État Kubernetes et métriques CPU/mémoire des pods |
-| GET | `/llm/status` | Vérifier la disponibilité du modèle Apertus auto-hébergé |
-| GET | `/v1/models` | Publier le modèle virtuel `kubeai-apertus` pour Open WebUI |
+| GET | `/llm/status` | Vérifier le modèle du fournisseur configuré ; effectue un appel au fournisseur |
+| GET | `/v1/models` | Publier `kubeai` et l'alias historique `kubeai-apertus` pour Open WebUI |
 | POST | `/v1/chat/completions` | Conversation enrichie des données réelles, JSON ou SSE |
 | POST | `/diagnose` | Analyse d'une question et observation utilisée comme preuve |
 
-`/ready` reste indépendant du moteur LLM : l'inventaire reste utile si le modèle
-est arrêté. Les routes de chat retournent alors 503 avec la source `llm`.
+`/ready` reste indépendant du fournisseur LLM : l'inventaire reste utile sans clé.
+Les routes de chat qui nécessitent une génération retournent alors 503 avec la source `llm`.
 
 ## Chat et diagnostic
 
-`POST /v1/chat/completions` accepte `model: kubeai-apertus`, une liste `messages`
+`POST /v1/chat/completions` accepte `model: kubeai` (ou l'alias historique
+`kubeai-apertus`), une liste `messages`
 (texte avec rôles user/assistant/system) et `stream: true` pour le streaming SSE.
 L'agent impose ses propres instructions et collecte une observation actuelle avant
 chaque génération. Les options supplémentaires non implémentées sont ignorées ;
@@ -43,10 +49,18 @@ compact, les métriques, les extraits de logs et l'état des sources. Les donné
 logs sont non fiables comme instructions ; le prompt demande au modèle d'en tenir
 compte. Les résultats restent à vérifier, car le LLM peut se tromper.
 
-Le moteur local est joint via `LLM_BASE_URL`, avec une clé lue dans
-`LLM_API_KEY_FILE`. Le timeout de génération est de 180 secondes par défaut.
-La route `/v1/models` publie le modèle configuré même si le moteur est arrêté ;
-`/llm/status` teste effectivement sa disponibilité.
+Mistral est joint en HTTPS via `MISTRAL_BASE_URL` ; le modèle est
+`MISTRAL_MODEL`. La clé vient de `MISTRAL_API_KEY` ou du Secret monté dans
+`MISTRAL_API_KEY_FILE`. Le timeout de génération est de 60 secondes par défaut.
+Le profil Apertus conserve ses variables `LLM_*` si `LLM_PROVIDER=apertus`.
+La route `/v1/models` publie les identifiants virtuels même sans clé ;
+`/llm/status` contacte réellement le fournisseur configuré.
+
+Le backend ne transmet au modèle que la question courante, au plus quatre
+questions antérieures et l'observation compacte. Il n'envoie pas les réponses
+anciennes de l'assistant. Les secrets et identifiants détectables sont masqués
+au mieux ; cette mesure ne garantit pas l'anonymisation. Voir
+[les données transmises et la décision régionale](mistral-api.md).
 
 ## GET /cluster/status
 
@@ -62,7 +76,7 @@ La réponse JSON contient :
 | `health` | `healthy`, `degraded`, `unknown` ou `empty` selon l'état des pods |
 | `data_status` | `complete` ou `partial`, indépendamment de la santé des pods |
 | `summary` | Total, Ready, malsains, terminés avec succès, en suppression et redémarrages |
-| `sources` | Disponibilité de Kubernetes et de Prometheus, avec messages éventuels |
+| `sources` | Disponibilité de Kubernetes et de Mimir (clé `mimir`), avec messages éventuels |
 | `warnings` | Données manquantes et avertissements des sources |
 | `pods` | Inventaire trié par nom |
 
@@ -100,10 +114,10 @@ La mesure est issue du monitoring et peut donc précéder l'état Kubernetes obs
 
 - Kubernetes indisponible ou accès refusé : HTTP 503, avec `detail.source` et
   `detail.message`. Aucun inventaire vide présenté comme un succès.
-- Prometheus indisponible ou réponse invalide : HTTP 200 avec inventaire Kubernetes,
-  `data_status: partial`, source Prometheus `unavailable` et mesures `null`.
-- Mesures incomplètes ou avertissements Prometheus : réponse partielle explicite.
-- `/ready` reste disponible pendant une panne de Prometheus, car l'inventaire
+- Mimir indisponible ou réponse invalide : HTTP 200 avec inventaire Kubernetes,
+  `data_status: partial`, source `mimir` `unavailable` et mesures `null`.
+- Mesures incomplètes ou avertissements de l'API Mimir : réponse partielle explicite.
+- `/ready` reste disponible pendant une panne de Mimir, car l'inventaire
   Kubernetes reste utile. `/health` est indépendant des deux services.
 
 Les appels sortants ont un timeout de 5 secondes par défaut. Aucun endpoint ne

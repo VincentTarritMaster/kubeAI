@@ -28,25 +28,26 @@ class PrometheusClient:
         self.settings = settings
 
     async def _query(self, query: str, timestamp: float):
-        body = await get_json(self.http, "prometheus", "/api/v1/query", params={
+        # Chemin relatif : conserver le préfixe Mimir déjà présent dans la base URL.
+        body = await get_json(self.http, "mimir", "api/v1/query", params={
             "query": query, "time": timestamp,
             "timeout": f"{max(1, int(self.settings.request_timeout * 1000))}ms",
         })
         data = body.get("data", {})
         if (body.get("status") != "success" or not isinstance(data, dict)
                 or data.get("resultType") != "vector" or not isinstance(data.get("result"), list)):
-            raise UpstreamError("prometheus", "Invalid Prometheus result")
+            raise UpstreamError("mimir", "Invalid Mimir result")
         samples = []
         warnings = [str(message) for message in body.get("warnings", [])]
         try:
             for result in data["result"]:
                 value = float(result["value"][1])
                 if not math.isfinite(value) or value < 0:
-                    warnings.append("An unusable Prometheus sample was ignored")
+                    warnings.append("An unusable Mimir sample was ignored")
                     continue
                 samples.append(MetricSample(labels=result["metric"], value=value))
         except (KeyError, TypeError, ValueError) as error:
-            raise UpstreamError("prometheus", "Invalid Prometheus sample") from error
+            raise UpstreamError("mimir", "Invalid Mimir sample") from error
         return samples, warnings
 
     async def snapshot(self, timestamp: float):

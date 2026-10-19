@@ -1,0 +1,55 @@
+# kubeAI : paramètres monolithiques repris des manifests de Kevin.
+# Une seule instance, sans Kafka ni stockage objet externe.
+target: all
+multitenancy_enabled: false
+ingest_storage:
+  enabled: false
+server:
+  http_listen_port: 9009
+  grpc_listen_port: 9095
+  log_level: info
+api:
+  prometheus_http_prefix: /prometheus
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/mimir/blocks
+  tsdb:
+    dir: /data/mimir/tsdb
+  bucket_store:
+    sync_dir: /data/mimir/tsdb-sync
+compactor:
+  data_dir: /data/mimir/compactor
+  sharding_ring:
+    kvstore:
+      store: inmemory
+limits:
+  ingestion_rate: 100000
+  ingestion_burst_size: 200000
+  # Conserver le comportement de Kevin : aucune purge par âge.
+  # Décider d'une rétention après validation des données du PVC.
+  compactor_blocks_retention_period: 0s
+ruler:
+  rule_path: /data/mimir/rules
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/mimir/ruler-store
+ingester:
+  ring:
+    replication_factor: 1
+    kvstore:
+      store: inmemory
+distributor:
+  ring:
+    kvstore:
+      store: inmemory
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+    kvstore:
+      store: inmemory
+activity_tracker:
+  filepath: /data/mimir/metrics-activity.log
+usage_stats:
+  enabled: false

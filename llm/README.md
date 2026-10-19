@@ -1,4 +1,8 @@
-# Apertus auto-hébergé et Open WebUI
+# kubeAI — profil Apertus facultatif
+
+Mistral API est le fournisseur principal du projet. Ce profil local conserve
+le travail de Vincent et demande une activation explicite avec
+`LLM_PROVIDER=apertus`. Il n'est pas utilisé par les tests Windows.
 
 Le profil local utilise **Apertus 8B Instruct 2509, Q4_K_M**, exécuté par
 **llama.cpp b11669** directement sur macOS Apple Silicon avec Metal.
@@ -6,16 +10,17 @@ Le modèle suisse et l'inférence restent sur la machine ; aucune API cloud
 ni abonnement ne sont nécessaires.
 
 ```text
-Navigateur → Open WebUI (Kubernetes) → Agent KubeAI (Kubernetes)
+Navigateur → Open WebUI (Kubernetes) → Agent kubeAI (Kubernetes)
                                       ├─ Kubernetes : état des pods
-                                      ├─ Prometheus : CPU/mémoire
+                                      ├─ Mimir : CPU/mémoire
                                       ├─ Loki : logs récents
                                       └─ Apertus / llama.cpp (Mac, GPU Metal)
 ```
 
 À chaque question, l'agent récupère de nouvelles observations et les transmet
-au modèle avec la conversation. L'intégration utilise le modèle virtuel
-`kubeai-apertus` et les routes compatibles OpenAI de l'agent ; elle ne dépend
+au fournisseur configuré avec la conversation. L'intégration utilise le modèle
+virtuel `kubeai` ; l'alias `kubeai-apertus` reste accepté pour l'historique.
+Les routes compatibles OpenAI de l'agent ne dépendent
 pas d'appels d'outils choisis par le modèle. Le JSON `/cluster/status` reste
 accessible séparément. Les réponses sont diffusées en SSE et comportent un
 pied de page avec le périmètre, l'heure d'observation et les sources disponibles.
@@ -42,31 +47,36 @@ reprend les transferts interrompus, utilise quatre connexions pour le modèle et
 ne télécharge pas les poids dans le disque Docker. Les sauvegardes Open WebUI se
 trouvent séparément dans `.cache/webui-backups/`.
 
-## Première installation
+## Préparation explicite du profil local
 
 Prérequis : macOS Apple Silicon, environ 6 Gio de disque libres, Docker Desktop,
 Minikube, kubectl, Python 3 et curl. L'agent dans l'image utilise Python 3.13.
 Depuis la racine du dépôt :
 
 ```bash
-minikube start --driver=docker
-bash scripts/start-local-ai.sh
+python3 scripts/local-llm.py setup
+python3 scripts/local-llm.py start
+python3 scripts/configure-local-llm.py --context minikube
 ```
 
-Ce script installe/vérifie les poids, démarre le moteur, puis appelle `start.sh`.
-Celui-ci transfère la clé locale vers le Secret Kubernetes, construit l'agent,
-migre si nécessaire les données Open WebUI vers un PVC et attend les services.
-La première installation télécharge environ 5 Go ; les suivantes réutilisent le cache.
+Ces commandes, lancées séparément par une personne sur un Mac adapté,
+téléchargent/vérifient les poids, démarrent le moteur et transfèrent la clé
+locale vers le Secret Kubernetes `kubeai-llm`. La première commande télécharge
+environ 5 Go. `start.sh` ne les exécute jamais automatiquement. Pour sélectionner
+ce profil dans le backend, renseigner explicitement dans sa configuration
+`LLM_PROVIDER=apertus`, `LLM_BASE_URL=http://host.minikube.internal:11435/v1`,
+`LLM_MODEL=apertus-8b`, `LLM_API_KEY_FILE=/var/run/secrets/kubeai-llm/api-key`
+et `LLM_TIMEOUT_SECONDS=180`. Dans Kubernetes, adapter le ConfigMap et
+redémarrer le Deployment avant d'essayer le chat.
 
-Pour relancer une installation déjà préparée :
+Pour déployer après cette préparation explicite :
 
 ```bash
 ./start.sh
 ```
 
 Si les fichiers du modèle ne sont pas installés, `start.sh` déploie quand même
-l'inventaire et le monitoring. Les requêtes de chat signalent alors l'absence de
-clé/serveur local. Le démarrage de l'agent ne dépend pas de la disponibilité du LLM.
+l'inventaire et le monitoring. Le démarrage de l'agent ne dépend pas du LLM.
 
 ## Utiliser le chat
 
@@ -74,7 +84,7 @@ clé/serveur local. Le démarrage de l'agent ne dépend pas de la disponibilité
 kubectl --context minikube port-forward -n kubeai service/open-webui 8080:80
 ```
 
-Ouvrir <http://127.0.0.1:8080>, choisir **kubeai-apertus** si nécessaire, puis poser :
+Ouvrir <http://127.0.0.1:8080>, choisir **kubeai** puis poser :
 
 > Quel est l'état du namespace kubeai ? Quels pods ont un problème ?
 
@@ -103,7 +113,8 @@ python3 scripts/local-llm.py start
 
 `stop` arrête uniquement le processus du projet, après vérification de sa commande.
 Les poids restent sur disque. Le moteur est un processus local détaché, pas un
-service macOS installé au démarrage. Après redémarrage du Mac, relancer `start.sh`.
+service macOS installé au démarrage. Après redémarrage du Mac, relancer
+explicitement `python3 scripts/local-llm.py start` si ce profil est souhaité.
 Arrêter le moteur libère ses ressources de calcul ; le monitoring reste utilisable.
 Son journal est `.cache/apertus/llama-server.log`.
 
@@ -163,8 +174,8 @@ arbitraires ne sont pas encore intégrés.
 
 Le profil garde Open WebUI sans authentification et les services internes sur
 un cluster local de confiance. Pour le cloud, prévoir un autre profil avec
-authentification, TLS et politiques réseau. Le modèle est actuellement sur le Mac,
-pas dans Kubernetes ; son hébergement devra être adapté au cluster cloud.
+authentification, TLS et politiques réseau. Le modèle local est sur le Mac,
+pas dans Kubernetes.
 Une autre machine peut héberger un serveur compatible et remplacer `LLM_BASE_URL`,
 `LLM_MODEL` et le Secret, sans changer la connexion Open WebUI à l'agent.
 

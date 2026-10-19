@@ -5,13 +5,9 @@ set -euo pipefail
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 context="${1:-minikube}"
 
-echo "Déploiement de KubeAI sur le contexte ${context}..."
+echo "Déploiement de kubeAI sur le contexte ${context}..."
 kubectl --context "$context" get nodes
 if [[ "$context" == "minikube" ]]; then
-  if [[ -f "$project_dir/.cache/apertus/api-key" ]]; then
-    python3 "$project_dir/scripts/local-llm.py" start
-    python3 "$project_dir/scripts/configure-local-llm.py" --context "$context"
-  fi
   bash "$project_dir/scripts/build-agent.sh" minikube
 fi
 python3 "$project_dir/scripts/prepare-webui-storage.py" --context "$context"
@@ -21,13 +17,13 @@ if [[ "$context" == "minikube" ]]; then
   kubectl --context "$context" rollout restart deployment/kubeai-agent -n kubeai
 fi
 
-for deployment in prometheus loki kube-state-metrics alloy; do
+for deployment in mimir loki kube-state-metrics alloy; do
   kubectl --context "$context" rollout status "deployment/$deployment" -n monitoring --timeout=5m
 done
 kubectl --context "$context" rollout status deployment/open-webui -n kubeai --timeout=5m
 kubectl --context "$context" rollout status deployment/kubeai-agent -n kubeai --timeout=5m
 
-echo "KubeAI est prêt. Vérifier la collecte :"
+echo "kubeAI est prêt. Vérifier la collecte :"
 echo "python3 scripts/verify-observability.py --context $context"
 echo "Ouvrir Open WebUI :"
 echo "kubectl --context $context port-forward -n kubeai service/open-webui 8080:80"

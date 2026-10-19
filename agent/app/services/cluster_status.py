@@ -94,21 +94,21 @@ class ClusterStatusService:
             raise raw_pods
         warnings = []
         if isinstance(snapshot, UpstreamError):
-            prometheus_status = SourceStatus(status="unavailable", message=snapshot.message)
+            mimir_status = SourceStatus(status="unavailable", message=snapshot.message)
             warnings.append(snapshot.message)
             snapshot = MetricsSnapshot([], [], [])
         elif isinstance(snapshot, Exception):
             raise snapshot
         else:
-            prometheus_status = SourceStatus(status="ok")
+            mimir_status = SourceStatus(status="ok")
         warnings.extend(snapshot.warnings)
         pods = sorted((pod_status(p, snapshot) for p in raw_pods), key=lambda pod: pod.name)
         missing = [p.name for p in pods if p.metrics.status in {"partial", "unavailable"}]
         if missing:
             warnings.append("Missing or incomplete metrics: " + ", ".join(missing))
-        if (missing or warnings) and prometheus_status.status == "ok":
-            prometheus_status.status = "partial"
-            prometheus_status.message = "Some metrics are missing or have warnings"
+        if (missing or warnings) and mimir_status.status == "ok":
+            mimir_status.status = "partial"
+            mimir_status.message = "Some metrics are missing or have warnings"
         summary = Summary(
             total=len(pods), ready=sum(p.ready for p in pods),
             unhealthy=sum(p.health == "unhealthy" for p in pods),
@@ -124,6 +124,6 @@ class ClusterStatusService:
         return ClusterStatus(
             observed_at=observed_at, namespace=self.kubernetes.settings.namespace,
             health=health, data_status="partial" if warnings else "complete", summary=summary,
-            sources={"kubernetes": SourceStatus(status="ok"), "prometheus": prometheus_status},
+            sources={"kubernetes": SourceStatus(status="ok"), "mimir": mimir_status},
             warnings=warnings, pods=pods,
         )

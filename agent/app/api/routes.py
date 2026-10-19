@@ -13,7 +13,7 @@ async def health():
 
 @router.get("/ready", tags=["health"], operation_id="get_agent_readiness", responses={503: {"description": "Kubernetes API unavailable"}})
 async def ready(request: Request):
-    """Check pod access in the configured namespace. Prometheus is optional."""
+    """Check pod access in the configured namespace. Mimir is optional."""
     await request.app.state.cluster_status.kubernetes.ready()
     return {"status": "ready"}
 
