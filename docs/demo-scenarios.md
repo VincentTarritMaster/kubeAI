@@ -173,4 +173,94 @@ le rendu Open WebUI restent à valider sur cluster.
 
 ## Corrélation et hypothèses de cause
 
-Relier logs et métriques pour proposer des hypothèses de cause, en distinguant clairement les faits observés des hypothèses.
+La démonstration C réutilise la collecte historique de B. Dans la configuration
+active, Alloy écrit dans Mimir les métriques CPU et mémoire cAdvisor et scrute
+kube-state-metrics. Le backend interroge aussi les séries historiques de
+redémarrages et de limites CPU/mémoire ; leur absence reste explicite. Aucun
+compteur d'erreurs HTTP ni histogramme de latence NestJS n'est instrumenté dans
+ce dépôt. Une question sur une lenteur NestJS ne peut donc pas promettre une
+cause liée au temps de réponse : il faut ajouter une instrumentation HTTP dans
+l'application, puis sa cible de scrape Alloy, et confirmer les noms et labels
+des séries Mimir avant d'activer la règle CPU + latence.
+
+### Règles de corrélation déterministes
+
+Ces seuils sont des heuristiques locales de démonstration, **pas des seuils du
+professeur ni des scores de confiance numériques**. Les observations doivent
+concerner le même pod et être éloignées de cinq minutes au plus. Une règle
+appuyée reste une hypothèse : la proximité temporelle ne démontre pas la cause.
+
+| Hypothèse | Preuves exigées | Réserve |
+|---|---|---|
+| Pression mémoire compatible avec OOM | Événement `OOMKilled`, augmentation d'une série historique de redémarrages autour de l'événement, working set ≥ 90 % d'une limite mémoire historique réellement mesurée | Un pic bref ou un autre conteneur peut expliquer l'écart ; une mémoire < 50 % de la limite est signalée comme contradiction |
+| Connectivité possible | Log de connexion refusée ou timeout ; un événement réseau proche renforce l'hypothèse | Un log isolé donne « preuves insuffisantes » ; le service distant ou l'application peuvent être en cause |
+| Contention CPU possible | CPU ≥ 80 % d'une limite historique et latence HTTP p95 réellement instrumentée ≥ 0,2 s et au moins doublée par rapport à un échantillon antérieur | La latence peut venir d'une dépendance ; **la règle n'est pas activable sur la configuration NestJS actuelle faute de métrique p95** |
+| Activité CPU du scénario | Marqueur `KUBEAI_DEMO_CPU_LOAD`, puis CPU accru d'au moins 0,05 cœur et doublé par rapport à un échantillon antérieur | Corrélation limitée ; le marqueur n'est pas une mesure de latence |
+
+Chaque hypothèse expose identifiant, description en français, références des
+observations, ressource, intervalle UTC, confiance qualitative, alternatives,
+contradictions et vérifications en lecture seule. Les métriques absentes,
+événements expirés, collectes tronquées et sources en échec conduisent à un
+statut partiel ou à « cause indéterminée ». Mistral peut seulement choisir la
+priorité parmi les hypothèses calculées ; son texte libre n'est pas publié.
+
+### Scénario simulé et scénario déployable
+
+Les tests unitaires utilisent des réponses Mimir, Loki et Kubernetes simulées.
+Ils couvrent les hypothèses OOM, connexion, CPU + latence **avec p95 injectée
+dans le test**, contradictions et données manquantes. Cela ne prouve pas la
+présence d'une série HTTP dans un cluster réel.
+
+Le manifeste [correlation-pod.yaml](../k8s/demo/correlation-pod.yaml) est un
+petit pod BusyBox distinct du déploiement normal. Il attend 35 secondes,
+émet un marqueur `KUBEAI_DEMO_CPU_LOAD`, lance une activité CPU pendant
+90 secondes, puis s'arrête. Le CPU cAdvisor devrait monter par rapport à
+la période d'attente, et Alloy devrait collecter les marqueurs Loki si les
+composants sont opérationnels. C'est une charge **artificielle**, sans trafic
+HTTP et sans panne de production. Le manifeste limite CPU et mémoire, coupe
+le jeton de ServiceAccount et n'ajoute aucune permission RBAC.
+
+Le protocole suivant est **déployable mais non exécuté** sur le poste Windows
+de 8 Go. Sur un cluster autorisé, relever les bornes avec fuseau, puis comparer
+les preuves aux sources avant de conclure :
+
+```powershell
+$ctx = 'nom-du-contexte'
+kubectl --context $ctx -n kubeai get pods
+$debut = Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz'
+kubectl --context $ctx apply -f k8s/demo/correlation-pod.yaml
+kubectl --context $ctx -n kubeai get pod kubeai-demo-correlation -w
+$fin = Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz'
+kubectl --context $ctx -n kubeai logs kubeai-demo-correlation --timestamps
+kubectl --context $ctx -n kubeai get events --sort-by=.metadata.creationTimestamp
+```
+
+Interrompre la veille `-w` après la fin du pod. Dans Open WebUI, modèle `kubeai`,
+poser la question en remplaçant les dates par `$debut` et `$fin` :
+
+```text
+Pourquoi le pod kubeai-demo-correlation est-il lent ? Corrèle les signaux début=2026-10-19T14:00:00+02:00 fin=2026-10-19T14:30:00+02:00 namespace=kubeai pod=kubeai-demo-correlation
+```
+
+La réponse attendue est limitée à l'activité CPU et au marqueur si tous deux
+sont collectés. Elle ne doit pas prétendre mesurer la latence de NestJS ni
+attribuer une panne externe. Vérifier les valeurs Mimir sur la même fenêtre :
+
+```powershell
+kubectl --context $ctx -n monitoring port-forward service/mimir 9009:9009
+```
+
+Dans un second terminal, interroger `/prometheus/api/v1/query_range` avec
+`rate(container_cpu_usage_seconds_total{namespace="kubeai",pod="kubeai-demo-correlation"}[2m])`,
+les bornes UTC et un pas de 30 secondes. Comparer les lignes Loki à `kubectl logs
+--timestamps`. Les événements Kubernetes peuvent avoir expiré ; la pagination
+de l'inventaire est plafonnée et une collecte partielle ne prouve pas une cause.
+
+Nettoyer uniquement ce pod de démonstration :
+
+```powershell
+kubectl --context $ctx delete -f k8s/demo/correlation-pod.yaml --ignore-not-found
+kubectl --context $ctx -n kubeai get pod kubeai-demo-correlation
+```
+
+Résultat **effectivement testé sur Kubernetes pour C : aucun à ce stade**.

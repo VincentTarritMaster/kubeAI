@@ -202,6 +202,41 @@ pas publié. Sans clé, le rendu déterministe reste disponible.
 
 ## Essai local
 
+## Corrélation des preuves via le chat et /diagnose
+
+Une question de lenteur, latence, corrélation, cause ou hypothèse emprunte le
+parcours C avant l'investigation B. Elle exige `début`, `fin`, un décalage UTC,
+`namespace` et `pod` explicites. Une demande ambiguë renvoie
+`scope: correlation`, `status: clarification_required` sans lire les sources.
+Le chat JSON, SSE et `/diagnose` utilisent le même service.
+
+L'observation contient la chronologie bornée de B et `hypotheses`,
+`correlation_limits`, `conclusion` (`hypothèses non confirmées` ou
+`cause indéterminée`) et `data_status`. Chaque hypothèse expose `id`,
+`description`, `supporting_observations` avec références, `resources`,
+`interval`, `confidence` qualitative, `alternatives`, `contradictions` et
+`recommended_checks`. Les faits et les hypothèses sont calculés par le backend.
+Mistral ne peut que prioriser un identifiant déjà présent ; aucune prose libre
+du modèle n'est ajoutée comme fait.
+
+Pour C, Mimir reçoit en plus des requêtes historiques PromQL sur
+`kube_pod_container_status_restarts_total` et
+`kube_pod_container_resource_limits` (CPU en cœurs et mémoire en octets).
+Ces séries sont utilisées seulement si Mimir les retourne avec le namespace et
+le pod demandés. Les cinq familles de requêtes restent dans une fenêtre de six
+heures, avec au plus 20 séries et 400 points au total ; le pas augmente pour
+respecter cette borne. Loki garde 50 lignes au plus, avec le filtre exact de
+namespace et pod. Les listes Kubernetes conservent leurs plafonds de l'inventaire.
+
+La configuration active ne collecte **aucune latence p95 ni erreur HTTP NestJS**.
+Une hausse CPU seule ne démontre ni saturation ni cause d'une lenteur. Une
+instrumentation applicative HTTP, son scrape et la vérification de ses labels
+sont nécessaires avant d'exploiter la règle CPU + latence en situation réelle.
+Les règles qualitatives et le protocole de démonstration figurent dans
+`docs/demo-scenarios.md`.
+
+## Essai local
+
 ```bash
 kubectl --context minikube port-forward -n kubeai service/kubeai-agent 8000:8000
 ```

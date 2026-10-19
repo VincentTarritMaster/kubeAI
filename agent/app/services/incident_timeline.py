@@ -103,8 +103,11 @@ def build(window, inventory, metrics, logs, failures):
         for point in metrics.points:
             moment = datetime.fromtimestamp(point.timestamp, tz=timezone.utc)
             resource = "/".join(s for s in (point.labels.get("namespace"), point.labels.get("pod")) if s) or "cluster"
-            unit = "cœur(s) CPU" if point.metric == "cpu_cores" else "octets de mémoire active"
-            value = f"{point.value:.4f}" if point.metric == "cpu_cores" else str(round(point.value))
+            units = {"cpu_cores": "cœur(s) CPU", "memory_working_set_bytes": "octets de mémoire active",
+                     "restart_count": "redémarrage(s) cumulés", "cpu_limit_cores": "cœur(s) de limite CPU",
+                     "memory_limit_bytes": "octets de limite mémoire"}
+            unit = units.get(point.metric, point.metric)
+            value = f"{point.value:.4f}" if point.metric in {"cpu_cores", "cpu_limit_cores"} else str(round(point.value))
             entries.append({"timestamp": stamp(moment), "type": "métrique", "source": "Mimir",
                             "resource": resource, "observation": f"Échantillon mesuré : {value} {unit}.",
                             "reference": f"query_range {point.metric} {resource} @ {stamp(moment)}"})
@@ -172,14 +175,11 @@ def render(report, ai_note):
     return "\n".join(lines)
 
 
-async def investigate(service, chat):
-    question = next(m.content for m in reversed(chat.messages) if m.role == "user")
-    window, error = parse_window(question)
-    if error:
-        return error, {"scope": "incident", "status": "clarification_required", "message": error}
+async def collect(service, window, *, include_correlation=False):
     tasks = [service.cluster_status.inventory(),
              service.cluster_status.prometheus.history(window["start"].timestamp(),
-                                                       window["end"].timestamp(), window["namespace"], window["pod"])]
+                                                       window["end"].timestamp(), window["namespace"], window["pod"],
+                                                       include_correlation=include_correlation)]
     if window["namespace"]:
         tasks.append(service.loki.logs_between(int(window["start"].timestamp() * 10**9),
                                                int(window["end"].timestamp() * 10**9),
@@ -191,6 +191,15 @@ async def investigate(service, chat):
     metrics = None if isinstance(results[1], Exception) else results[1]
     logs = None if len(results) < 3 or isinstance(results[2], Exception) else results[2]
     report = redact_data(build(window, inventory, metrics, logs, failures), service.sensitive_values())
+    return report, inventory, metrics, logs
+
+
+async def investigate(service, chat):
+    question = next(m.content for m in reversed(chat.messages) if m.role == "user")
+    window, error = parse_window(question)
+    if error:
+        return error, {"scope": "incident", "status": "clarification_required", "message": error}
+    report, _, _, _ = await collect(service, window)
     ai_note = "Mistral indisponible ; chronologie déterministe conservée."
     if service.sensitive_values() and report["timeline"]:
         try:

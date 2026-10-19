@@ -121,10 +121,9 @@ class PrometheusClient:
         )
 
     async def history(self, start: float, end: float, namespace: str | None = None,
-                      pod: str | None = None) -> HistoricalMetrics:
+                      pod: str | None = None, *, include_correlation: bool = False) -> HistoricalMetrics:
         if not start < end or end - start > self.MAX_RANGE_SECONDS:
             raise ValueError("Historical Mimir window must be positive and at most six hours")
-        step = max(self.MIN_STEP_SECONDS, math.ceil((end - start) / 240))
         selector = ['job="kubernetes-cadvisor"', 'container!=""', 'container!="POD"']
         selector.append('namespace=' + json.dumps(namespace) if namespace else 'namespace!=""')
         selector.append('pod=' + json.dumps(pod) if pod else 'pod!=""')
@@ -135,6 +134,16 @@ class PrometheusClient:
             "cpu_cores": f'sum by (namespace,pod) (rate({cpu}[2m]))',
             "memory_working_set_bytes": f'sum by (namespace,pod) ({memory})',
         }
+        if include_correlation:
+            target = [f'namespace={json.dumps(namespace)}', f'pod={json.dumps(pod)}']
+            target_selector = ",".join(target)
+            queries.update({
+                "restart_count": f'sum by (namespace,pod) (kube_pod_container_status_restarts_total{{{target_selector}}})',
+                "cpu_limit_cores": f'sum by (namespace,pod) (kube_pod_container_resource_limits{{{target_selector},resource="cpu",unit="core"}})',
+                "memory_limit_bytes": f'sum by (namespace,pod) (kube_pod_container_resource_limits{{{target_selector},resource="memory",unit="byte"}})',
+            })
+        step = max(self.MIN_STEP_SECONDS,
+                   math.ceil((end - start) / max(1, self.MAX_POINTS // len(queries) - 1)))
         points: list[HistoricalPoint] = []
         warnings: list[str] = []
         truncated = False

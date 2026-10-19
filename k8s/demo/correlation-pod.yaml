@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubeai-demo-correlation
+  namespace: kubeai
+  labels:
+    kubeai-demo: correlation
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 300
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: load
+      image: busybox:1.37.0
+      command:
+        - sh
+        - -c
+        - >-
+          echo 'KUBEAI_DEMO_CPU_LOAD baseline: waiting before synthetic workload';
+          sleep 35;
+          echo 'KUBEAI_DEMO_CPU_LOAD start: synthetic CPU activity, not a production incident';
+          yes >/dev/null & load_pid=$!;
+          sleep 90;
+          kill "$load_pid";
+          wait "$load_pid" || true;
+          echo 'KUBEAI_DEMO_CPU_LOAD end: synthetic CPU activity stopped';
+          sleep 45
+      resources:
+        requests:
+          cpu: 10m
+          memory: 8Mi
+        limits:
+          cpu: 200m
+          memory: 32Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
