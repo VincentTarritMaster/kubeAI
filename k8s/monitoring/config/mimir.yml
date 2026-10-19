@@ -1,4 +1,4 @@
-# kubeAI : paramètres monolithiques repris des manifests de Kevin.
+# kubeAI : paramètres retenus pour le déploiement monolithique.
 # Une seule instance, sans Kafka ni stockage objet externe.
 target: all
 multitenancy_enabled: false
@@ -26,7 +26,7 @@ compactor:
 limits:
   ingestion_rate: 100000
   ingestion_burst_size: 200000
-  # Conserver le comportement de Kevin : aucune purge par âge.
+  # Aucune purge automatique par âge dans le profil local actuel.
   # Décider d'une rétention après validation des données du PVC.
   compactor_blocks_retention_period: 0s
 ruler:

@@ -4,7 +4,7 @@ Le même backend FastAPI sert les deux profils : `mistral-api` par défaut et
 `local` pour tout serveur compatible avec l'API OpenAI. L'ancien nom
 `LLM_PROVIDER=apertus` reste accepté. Open WebUI garde son endpoint vers l'agent
 et le même identifiant virtuel `kubeai` dans les deux cas. Ce profil local
-conserve le travail de Vincent.
+reste une option locale du projet commun.
 
 Le profil local utilise **Apertus 8B Instruct 2509, Q4_K_M**, exécuté par
 **llama.cpp b11669** directement sur macOS Apple Silicon avec Metal.

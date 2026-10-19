@@ -204,7 +204,7 @@ le budget du PC Windows 8 Go. Le Mac 32 Go est la machine prévue pour cet essai
 mais la consommation réelle doit être mesurée sur cette machine. Aucun chiffre
 de consommation n'a été collecté dans cette étape.
 
-## Écarts par rapport à l'architecture de référence de Kevin
+## Évolution des profils dans l'architecture kubeAI
 
 - Le PDF reste inchangé et reste une référence de conception. L'application
   livrée utilise un FastAPI commun ; LangChain n'est pas intégré.

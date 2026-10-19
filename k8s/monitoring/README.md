@@ -11,17 +11,25 @@ incluse dans `kubectl apply -k k8s/` ; Helm n'est pas nécessaire.
 | kube-state-metrics | 2.20.0 | État, disponibilité et redémarrages des workloads |
 
 Mimir est le stockage de métriques du tronc commun kubeAI de Kevin, Vincent et
-Anass. L'intégration reprend les paramètres pertinents du Mimir de
-`kevin_version/k8s/monitoring/`, adaptés à cette seule pile. Le PDF de Kevin et
-les anciens manifests Prometheus sont conservés. Le serveur Prometheus autonome
-est exclu du rendu Kustomize cible ; les composants Alloy `prometheus.*` et les
-requêtes PromQL restent nécessaires.
+Anass. Le déploiement actif utilise les manifests Kustomize du dépôt. Aucun
+serveur Prometheus autonome n'est inclus ; les composants Alloy `prometheus.*`
+et les requêtes PromQL restent nécessaires. Les configurations applicatives
+Prometheus sont collectées uniquement par opt-in des pods du namespace `kubeai`
+avec les annotations `prometheus.io/scrape: "true"` et
+`prometheus.io/port: "<port>"` (chemin facultatif `prometheus.io/path`).
 
 **État de validation :** configuration Mimir intégrée pour validation statique et
 tests HTTP simulés ; fonctionnement réel sur Kubernetes non vérifié pendant cette
-étape. La validation de bout en bout ci-dessous reste à effectuer par Kevin ou
-Vincent sur une machine adaptée. Le poste Windows de 8 Go est réservé aux tests
+étape. La validation de bout en bout ci-dessous reste à effectuer collectivement
+sur une machine adaptée. Le poste Windows de 8 Go est réservé aux tests
 légers, sans démarrage de Docker, Minikube, Mimir ou LLM.
+
+La syntaxe de `config/config.alloy` reste à valider avec le binaire officiel
+Grafana Alloy : celui-ci n'est pas installé dans l'environnement de contrôle et
+aucun téléchargement n'a été effectué. Le rendu Kustomize ne valide pas cette
+syntaxe. Avant déploiement, exécuter `alloy validate` sur ce fichier avec la
+version Alloy prévue (1.20.1), puis conserver le résultat dans le suivi de
+validation.
 
 ## Circulation des données
 
@@ -229,7 +237,7 @@ curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
 ## Stockage, droits et limites
 
 - Mimir : une réplique monolithique avec stratégie `Recreate`, PVC 10 Gio pour les
-  blocs, TSDB et fichiers de travail. La configuration Kevin de conservation
+  blocs, TSDB et fichiers de travail. La configuration de conservation
   illimitée est maintenue (`compactor_blocks_retention_period: 0s`) pour ne pas
   introduire de purge des données. Le disque peut donc saturer ; surveiller
   l'espace, y compris le WAL et les blocs en cours. Décider d'une rétention après

@@ -53,7 +53,7 @@ Le sujet demande :
 ## Configuration locale
 
 Les commandes de déploiement ci-dessous sont destinées à une machine adaptée,
-utilisée par Kevin ou Vincent. Sur le poste Windows de 8 Go, limiter la validation
+utilisée par un membre du groupe. Sur le poste Windows de 8 Go, limiter la validation
 aux tests du backend et au rendu des manifests, sans démarrer Docker, Minikube,
 Mimir ou un LLM. Voir [les ressources et la validation Mimir](k8s/monitoring/README.md).
 
@@ -237,11 +237,11 @@ kubectl kustomize .\k8s\
 ```
 
 Le rendu vérifie l'assemblage Kustomize ; il ne valide pas le démarrage ni le schéma
-des configurations Mimir/Alloy. Les anciens manifests Prometheus restent dans le
-dépôt, hors du déploiement cible. `kubectl apply -k` ne supprime pas un ancien
-serveur Prometheus déjà présent dans un cluster ; son arrêt devra être organisé
-après validation de Mimir. Conserver les PVC et les données existantes ; aucun
-nettoyage automatique par `--prune` n'est prévu.
+des configurations Mimir/Alloy. Aucun serveur Prometheus autonome n'est inclus.
+`kubectl apply -k` ne supprime pas un ancien serveur Prometheus ou PVC déjà présent
+dans un cluster ; son arrêt devra être organisé après validation de Mimir.
+Conserver les PVC et les données existantes ; aucun nettoyage automatique par
+`--prune` n'est prévu.
 
 ### Accéder à Open WebUI
 

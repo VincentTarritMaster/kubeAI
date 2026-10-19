@@ -11,9 +11,8 @@ Les données et le WAL des métriques Alloy reposent sur des PVC. Mimir conserve
 les blocs sans purge automatique ; Loki garde sa rétention de 48 h. Voir
 `k8s/monitoring/README.md` pour la validation et les limites de stockage.
 
-Le projet collectif de Kevin, Vincent et Anass reprend le Mimir monolithique
-de `kevin_version/k8s/monitoring/` dans les manifests principaux. Le PDF de Kevin
-reste la référence d'architecture. Le circuit de collecte configuré est
+Le projet collectif de Kevin, Vincent et Anass déploie Mimir en mode monolithique
+avec des manifests Kustomize communs. Le circuit de collecte configuré est
 **Alloy → Mimir + Loki → FastAPI**, sans serveur Prometheus autonome dans le rendu
 Kustomize, sans traces ni Grafana à cette étape. Les protocoles Prometheus et
 les requêtes PromQL sont conservés. L'agent expose `/cluster/status` avec l'état des pods du
@@ -42,6 +41,7 @@ n'a été effectué.
 - **Mimir** : stockage monolithique des métriques reçues d'Alloy, avec API compatible Prometheus/PromQL sur le port 9009.
 - **Loki** : reçoit et recherche les logs.
 - **Alloy** : découvre les pods et nœuds, collecte leurs logs vers Loki et les métriques vers Mimir.
+- **Métriques applicatives** : les pods `kubeai` peuvent demander le scraping en ajoutant `prometheus.io/scrape: "true"`, `prometheus.io/port: "<port>"` et facultativement `prometheus.io/path: "/metrics"`. Seuls les pods Running du namespace `kubeai` sont ciblés, à 30 secondes d'intervalle.
 - **kube-state-metrics** : expose l'état et les redémarrages des pods et l'état des workloads.
 - **Modèle de langage** : Mistral Small 4 via API HTTPS par défaut. Apertus 8B Instruct quantifié reste une option locale explicite sur Mac.
 - **Kubernetes** : exécute les composants et fournit nœuds, pods et événements à l'agent via un ClusterRole limité à `list`.
@@ -70,8 +70,8 @@ région d'inférence et l'utilisation de données sensibles restent à valider a
 le groupe. Voir [la configuration Mistral](mistral-api.md) et
 [les deux profils LLM](architecture-llm-profiles.md).
 
-Les anciens manifests et le PVC Prometheus sont conservés hors du déploiement
-actif. Réappliquer Kustomize ne retire pas les anciennes ressources du cluster.
-La validation et la transition opérationnelle sont décrites dans
+Les manifests communs ne déploient pas de serveur Prometheus autonome. Un ancien
+serveur ou PVC peut toutefois subsister dans un cluster déjà utilisé ; réappliquer
+Kustomize ne retire pas les ressources absentes du rendu. La validation et la transition opérationnelle sont décrites dans
 [`k8s/monitoring/README.md`](../k8s/monitoring/README.md) ; aucun PVC ne doit être
 supprimé pour cette transition.
