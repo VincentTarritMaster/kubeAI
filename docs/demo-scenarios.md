@@ -103,7 +103,73 @@ Mimir séparément, sans conclure à une saturation à partir du seul usage.
 
 ## Investigation avec chronologie
 
-Présenter dans l’ordre les signaux pertinents d’un incident concernant un nœud, un pod ou un service.
+La démonstration B utilise le pod volontairement échoué
+`k8s/demo/failure-pod.yaml`. Ses messages parlent d'une variable de
+démonstration et d'un code de sortie `42` ; ils ne prouvent aucune panne de base
+de données ou de service externe. Les tests automatisés emploient uniquement
+des réponses HTTP simulées. Le protocole suivant reste **à effectuer** sur un
+cluster autorisé ; il n'a pas été lancé sur le poste Windows de 8 Go.
+
+### Préparation et déclenchement ultérieur
+
+Choisir explicitement un contexte et vérifier que le namespace `kubeai`, l'agent,
+Mimir et Loki sont accessibles. Noter l'heure avant et après la simulation, avec
+son décalage UTC ; la fenêtre doit couvrir l'événement et rester sous six heures.
+
+```powershell
+$ctx = 'nom-du-contexte'
+kubectl --context $ctx -n kubeai get pods
+$debut = Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz'
+kubectl --context $ctx apply -f k8s/demo/failure-pod.yaml
+kubectl --context $ctx -n kubeai get pod kubeai-demo-failure -w
+$fin = Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz'
+```
+
+Arrêter `-w` lorsque le pod est `Failed`. Dans Open WebUI, sélectionner le modèle
+`kubeai` puis poser la question en remplaçant les deux dates par les valeurs
+relevées :
+
+```text
+Que s'est-il passé lors de l'incident début=2026-10-19T14:00:00+02:00 fin=2026-10-19T14:30:00+02:00 namespace=kubeai pod=kubeai-demo-failure ?
+```
+
+Une question « incident de 14 h » sans date, borne de fin ni fuseau reçoit une
+demande de précision, sans collecte historique. Les bornes ISO explicites
+déclenchent la lecture bornée des événements Kubernetes, des logs Loki et des
+échantillons CPU/mémoire historiques Mimir. La chronologie attendue classe les
+observations réellement présentes par heure UTC et cite leur source et leur
+référence. Le log de sortie `42` peut figurer s'il a été collecté ; un événement
+`Warning` peut figurer s'il existe encore ; des mesures peuvent manquer pour un
+pod très court. Le système ne fabrique pas les observations absentes. L'état
+`Failed` et le cumul des redémarrages lus ensuite sont présentés comme état
+actuel, séparé des faits historiques.
+
+Pour confronter la réponse aux sources, utiliser en lecture seule :
+
+```powershell
+kubectl --context $ctx -n kubeai get pod kubeai-demo-failure -o yaml
+kubectl --context $ctx -n kubeai logs kubeai-demo-failure --timestamps
+kubectl --context $ctx -n kubeai get events --sort-by=.metadata.creationTimestamp
+```
+
+Comparer les horodatages aux données Loki et Mimir pour la même fenêtre UTC.
+Un événement absent peut avoir expiré ; une mesure absente ne signifie pas zéro.
+Les horloges des sources peuvent diverger. Une proximité dans la chronologie
+n'établit pas la cause racine. Vérifier que la réponse distingue bien constats,
+hypothèses, données manquantes et vérifications en lecture seule.
+
+Après le contrôle, supprimer uniquement le pod de démonstration :
+
+```powershell
+kubectl --context $ctx delete -f k8s/demo/failure-pod.yaml --ignore-not-found
+kubectl --context $ctx -n kubeai get pod kubeai-demo-failure
+```
+
+Résultat observable des tests **simulés** : événements remis dans l'ordre,
+log et mesures associés à leurs horodatages, absence de fausse causalité,
+réponse JSON/SSE cohérente et repli déterministe sans Mistral. La rétention
+réelle des événements, la collecte de logs, la présence d'échantillons Mimir et
+le rendu Open WebUI restent à valider sur cluster.
 
 ## Corrélation et hypothèses de cause
 

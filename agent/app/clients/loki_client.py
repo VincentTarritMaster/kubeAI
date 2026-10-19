@@ -1,4 +1,6 @@
 import json
+from dataclasses import dataclass
+import re
 import time
 
 import httpx
@@ -7,7 +9,16 @@ from app.clients.base import UpstreamError, get_json
 from app.config import Settings
 
 
+@dataclass
+class HistoricalLogs:
+    entries: list[dict]
+    truncated: bool = False
+    outside_window: int = 0
+
+
 class LokiClient:
+    MAX_LINES = 50
+    MAX_RANGE_NS = 6 * 3600 * 10**9
     def __init__(self, http: httpx.AsyncClient, settings: Settings):
         self.http = http
         self.settings = settings
@@ -37,3 +48,52 @@ class LokiClient:
             return sorted(entries, key=lambda item: int(item["timestamp_ns"]), reverse=True)[:12]
         except (KeyError, TypeError, ValueError) as error:
             raise UpstreamError("loki", "Invalid Loki sample") from error
+
+    async def logs_between(self, start_ns: int, end_ns: int, namespace: str,
+                           pod: str | None = None) -> HistoricalLogs:
+        if not 0 < start_ns < end_ns or end_ns - start_ns > self.MAX_RANGE_NS:
+            raise ValueError("Historical Loki window must be positive and at most six hours")
+        valid = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+        if not re.fullmatch(valid, namespace) or len(namespace) > 63:
+            raise ValueError("Invalid namespace for Loki selector")
+        if pod and (not re.fullmatch(valid, pod) or len(pod) > 253):
+            raise ValueError("Invalid pod for Loki selector")
+        selector = "{namespace=" + json.dumps(namespace)
+        if pod:
+            selector += ",pod=" + json.dumps(pod)
+        selector += "}"
+        response = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
+            "query": selector, "start": str(start_ns), "end": str(end_ns),
+            "direction": "forward", "limit": str(self.MAX_LINES + 1),
+        })
+        data = response.get("data")
+        if (response.get("status") != "success" or not isinstance(data, dict)
+                or data.get("resultType") != "streams" or not isinstance(data.get("result"), list)):
+            raise UpstreamError("loki", "Invalid Loki range result")
+        entries = []
+        truncated = False
+        outside_window = 0
+        try:
+            for stream in data["result"]:
+                labels = stream["stream"]
+                if not isinstance(labels, dict) or labels.get("namespace") != namespace:
+                    continue
+                if pod and labels.get("pod") != pod:
+                    continue
+                for raw_stamp, message in stream["values"]:
+                    stamp = int(raw_stamp)
+                    if start_ns <= stamp <= end_ns and isinstance(message, str):
+                        entries.append({"namespace": namespace, "pod": labels.get("pod"),
+                                        "container": labels.get("container"),
+                                        "timestamp_ns": str(raw_stamp), "message": message[:400]})
+                        if len(entries) > self.MAX_LINES:
+                            truncated = True
+                            break
+                    elif not start_ns <= stamp <= end_ns:
+                        outside_window += 1
+                if truncated:
+                    break
+        except (KeyError, TypeError, ValueError) as error:
+            raise UpstreamError("loki", "Invalid Loki range sample") from error
+        entries.sort(key=lambda item: int(item["timestamp_ns"]))
+        return HistoricalLogs(entries[:self.MAX_LINES], truncated, outside_window)

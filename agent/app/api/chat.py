@@ -12,6 +12,7 @@ from app.services.diagnosis import CHAT_MODEL, source_note
 from app.services.source_notes import SourceNoteFilter, filter_source_notes
 from app.services.health_answer import health_answer
 from app.services.global_health import cluster_health_question
+from app.services.incident_timeline import incident_question
 from app.services.privacy import redact_text
 
 router = APIRouter()
@@ -42,6 +43,9 @@ def completion(content, model=CHAT_MODEL):
 
 
 async def finish_nonstream(service, chat):
+    if incident_question(chat):
+        text, observation = await service.incident(chat)
+        return completion(text, chat.model), observation
     if cluster_health_question(chat):
         text, observation = await service.global_health()
         return completion(text, chat.model), observation
@@ -123,8 +127,9 @@ async def chat_completions(body: ChatRequest, request: Request):
         answer, _ = await finish_nonstream(service, body)
         return answer
 
-    if cluster_health_question(body):
-        answer, _ = await service.global_health()
+    if incident_question(body) or cluster_health_question(body):
+        answer, _ = (await service.incident(body) if incident_question(body)
+                     else await service.global_health())
         common = {"id": "chatcmpl-" + uuid.uuid4().hex, "object": "chat.completion.chunk",
                   "created": int(time.time()), "model": body.model}
 

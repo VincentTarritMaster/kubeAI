@@ -164,6 +164,42 @@ collectés. Le timeout HTTP reste configurable (`UPSTREAM_TIMEOUT_SECONDS`,
 5 secondes par appel par défaut). Cette route ne modifie pas le contrat de
 `/cluster/status` ni l'observation fournie au modèle.
 
+## Investigation d'incident via le chat et /diagnose
+
+Une question contenant « incident », « chronologie » ou « redémarré » emprunte
+le parcours historique du chat JSON, du flux SSE et de `/diagnose`. La question
+doit contenir `début` et `fin` au format ISO 8601 avec décalage UTC explicite,
+par exemple `début=2026-10-19T14:00:00+02:00 fin=2026-10-19T14:30:00+02:00`.
+`namespace` et `pod` peuvent préciser la cible ; un pod nécessite son namespace.
+Une heure seule, « ce matin », une date sans fuseau, un intervalle inversé ou
+supérieur à six heures donnent une demande de précision sans interroger les sources.
+Sans namespace, la recherche des logs est indisponible pour éviter une lecture
+Loki couvrant tout le cluster.
+
+L'observation de `/diagnose` contient `scope: incident`, les bornes normalisées
+en UTC, `timezone` fourni, `namespace`, `pod`, `timeline`, `current_pods`,
+`sources` (dont événements et pods Kubernetes), `missing`, `warnings` et
+`data_status`. Chaque entrée de `timeline`
+porte `timestamp`, `type` (`événement`, `log`, `métrique`), `source`, `resource`,
+`observation` et `reference`. Les entrées sont triées chronologiquement et
+dédoublonnées. `current_pods` est un relevé actuel distinct : son nombre de
+redémarrages cumulé ne date pas le redémarrage.
+
+Mimir utilise `api/v1/query_range` sous le préfixe `/prometheus`, avec des
+requêtes PromQL CPU `rate(...[2m])` et mémoire `container_memory_working_set_bytes`
+agrégées par namespace et pod. Le pas est au moins 30 secondes, avec 20 séries
+et 200 points au plus par mesure. Loki utilise `/loki/api/v1/query_range`,
+un sélecteur de namespace et éventuellement de pod, les deux bornes en
+nanosecondes, `direction=forward` et 50 lignes au plus. Les événements et pods
+proviennent de l'inventaire Kubernetes borné existant. Toute limite atteinte
+est signalée. Un `403`, timeout ou manque d'échantillons est indiqué sans
+remplacer les faits absents par des zéros ou une cause supposée.
+
+La réponse distingue incident, chronologie, constats, hypothèses, données
+manquantes et vérifications manuelles en lecture seule. Mistral peut seulement
+sélectionner une source déjà appuyée par la chronologie ; son texte libre n'est
+pas publié. Sans clé, le rendu déterministe reste disponible.
+
 ## Essai local
 
 ```bash

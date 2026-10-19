@@ -7,6 +7,7 @@ from app.clients.base import UpstreamError
 from app.models import ChatRequest
 from app.services.privacy import redact_data, redact_text
 from app.services.global_health import assess, focus_note, model_focus, render
+from app.services.incident_timeline import investigate
 
 PROMPT = (Path(__file__).resolve().parents[1] / "prompts/system_prompt.txt").read_text(encoding="utf-8")
 CHAT_MODEL = "kubeai"
@@ -24,6 +25,9 @@ class DiagnosisService:
         except (OSError, UnicodeError):
             key = ""
         return (key,) if key else ()
+
+    async def incident(self, chat):
+        return await investigate(self, chat)
 
     async def global_health(self):
         """Global health for chat and diagnosis; all facts precede optional Mistral use."""

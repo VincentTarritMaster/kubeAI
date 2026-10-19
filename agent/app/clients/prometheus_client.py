@@ -29,7 +29,27 @@ class ClusterUsage:
     warnings: list[str]
 
 
+@dataclass(frozen=True)
+class HistoricalPoint:
+    timestamp: float
+    metric: str
+    value: float
+    labels: dict[str, str]
+
+
+@dataclass
+class HistoricalMetrics:
+    points: list[HistoricalPoint]
+    warnings: list[str]
+    truncated: bool = False
+    partial: bool = False
+
+
 class PrometheusClient:
+    MAX_RANGE_SECONDS = 6 * 3600
+    MIN_STEP_SECONDS = 30
+    MAX_SERIES = 20
+    MAX_POINTS = 400
     def __init__(self, http: httpx.AsyncClient, settings: Settings):
         self.http = http
         self.settings = settings
@@ -99,3 +119,75 @@ class PrometheusClient:
             memory_working_set_bytes=round(memory_samples[0].value) if memory_samples else None,
             warnings=warnings,
         )
+
+    async def history(self, start: float, end: float, namespace: str | None = None,
+                      pod: str | None = None) -> HistoricalMetrics:
+        if not start < end or end - start > self.MAX_RANGE_SECONDS:
+            raise ValueError("Historical Mimir window must be positive and at most six hours")
+        step = max(self.MIN_STEP_SECONDS, math.ceil((end - start) / 240))
+        selector = ['job="kubernetes-cadvisor"', 'container!=""', 'container!="POD"']
+        selector.append('namespace=' + json.dumps(namespace) if namespace else 'namespace!=""')
+        selector.append('pod=' + json.dumps(pod) if pod else 'pod!=""')
+        labels = ",".join(selector)
+        cpu = f'container_cpu_usage_seconds_total{{{labels}}}'
+        memory = f'container_memory_working_set_bytes{{{labels}}}'
+        queries = {
+            "cpu_cores": f'sum by (namespace,pod) (rate({cpu}[2m]))',
+            "memory_working_set_bytes": f'sum by (namespace,pod) ({memory})',
+        }
+        points: list[HistoricalPoint] = []
+        warnings: list[str] = []
+        truncated = False
+        partial = False
+        successes = 0
+        for kind, query in queries.items():
+            try:
+                body = await get_json(self.http, "mimir", "api/v1/query_range", params={
+                    "query": query, "start": start, "end": end, "step": step,
+                    "timeout": f"{max(1, int(self.settings.request_timeout * 1000))}ms",
+                })
+            except UpstreamError as error:
+                partial = True
+                warnings.append(f"{kind}: {error.message}")
+                continue
+            successes += 1
+            data = body.get("data")
+            if (body.get("status") != "success" or not isinstance(data, dict)
+                    or data.get("resultType") != "matrix" or not isinstance(data.get("result"), list)):
+                raise UpstreamError("mimir", "Invalid Mimir range result")
+            raw_warnings = body.get("warnings")
+            if isinstance(raw_warnings, list):
+                warnings.extend(str(item)[:240] for item in raw_warnings[:8])
+            series = data["result"]
+            query_points = 0
+            if len(series) > self.MAX_SERIES:
+                truncated = True
+            for item in series[:self.MAX_SERIES]:
+                try:
+                    labels = item["metric"]
+                    values = item["values"]
+                    if not isinstance(labels, dict) or not isinstance(values, list):
+                        raise TypeError
+                    if (namespace and labels.get("namespace") != namespace) or (pod and labels.get("pod") != pod):
+                        warnings.append("Mimir series outside requested resource ignored")
+                        continue
+                    for raw_stamp, raw_value in values:
+                        stamp, value = float(raw_stamp), float(raw_value)
+                        if not math.isfinite(stamp) or not math.isfinite(value) or value < 0:
+                            warnings.append("Unusable Mimir sample ignored")
+                            continue
+                        if not start <= stamp <= end:
+                            warnings.append("Mimir sample outside requested window ignored")
+                            continue
+                        if query_points >= self.MAX_POINTS // len(queries):
+                            truncated = True
+                            break
+                        points.append(HistoricalPoint(stamp, kind, value, labels))
+                        query_points += 1
+                except (KeyError, TypeError, ValueError) as error:
+                    raise UpstreamError("mimir", "Invalid Mimir range sample") from error
+        if successes == 0:
+            raise UpstreamError("mimir", "; ".join(warnings))
+        if truncated:
+            warnings.append("Mimir series or sample limit reached")
+        return HistoricalMetrics(points, warnings, truncated, partial)
