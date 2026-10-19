@@ -1,10 +1,25 @@
-"""Configuration explicite ; aucun fichier .env n'est chargé automatiquement."""
+"""Configuration explicite ; le .env est réservé au développement local opt-in."""
 
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+
+
+_DEVELOPMENT_DOTENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+
+
+def _load_development_dotenv():
+    if os.getenv("KUBEAI_ENV", "").strip().lower() != "development":
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError as error:
+        raise RuntimeError(
+            "Le chargement local de .env nécessite python-dotenv ; installez agent/requirements.txt"
+        ) from error
+    load_dotenv(dotenv_path=_DEVELOPMENT_DOTENV_PATH, override=False)
 
 
 @dataclass(frozen=True)
@@ -63,6 +78,7 @@ class Settings:
 
     @classmethod
     def from_env(cls):
+        _load_development_dotenv()
         provider = os.getenv("LLM_PROVIDER", cls.llm_provider).strip().lower()
         local = provider in {"local", "apertus"}
         ca_file = os.getenv("KUBERNETES_CA_FILE", cls.ca_file)

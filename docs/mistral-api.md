@@ -25,9 +25,11 @@ autorisation d'utiliser une vraie clé.
 | `MISTRAL_API_KEY_FILE` | `/var/run/secrets/kubeai-mistral/api-key` | Fichier Secret Kubernetes monté en lecture seule |
 | `LLM_TIMEOUT_SECONDS` | `60` | Délai de l'appel au fournisseur |
 
-`.env.example` contient une valeur manifestement fictive. Le backend ne charge
-pas automatiquement ce fichier. Aucune clé réelle ne doit être écrite dans Git,
-une ConfigMap, la documentation ou les logs. Le Deployment monte le Secret
+`.env.example` contient une valeur manifestement fictive. En développement
+local, le backend charge le `.env` racine seulement avec `KUBEAI_ENV=development` ;
+les variables déjà définies dans le processus restent prioritaires. Kubernetes
+n'active pas ce mode. Aucune clé réelle ne doit être écrite dans Git, une ConfigMap,
+la documentation ou les logs. Le Deployment monte le Secret
 facultatif `kubeai-mistral` ; s'il manque, une demande de génération renvoie
 une erreur explicite, alors que `/health`, `/ready` et `/cluster/status`
 restent utilisables. La route `/llm/status` effectue un véritable appel à

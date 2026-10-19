@@ -30,11 +30,12 @@ Alloy ── métriques ──> Mimir       Alloy ── logs ──> Loki
 
 ## Configuration sur Windows et macOS
 
-Le backend ne charge aucun fichier `.env` automatiquement. Copier l'exemple
-voulu vers `.env` ne suffit donc pas à configurer le processus : exporter ses
-variables dans l'environnement avant de lancer Uvicorn. Les fichiers exemples
-ne contiennent aucune clé. Ne pas enregistrer une vraie clé dans Git ou dans une
-ConfigMap.
+Le backend charge le `.env` à la racine du dépôt uniquement si
+`KUBEAI_ENV=development` est défini explicitement avant le démarrage. Les
+variables déjà présentes dans l'environnement gardent la priorité. Kubernetes
+n'active pas ce mode et continue d'utiliser ses variables et fichiers Secret.
+Les fichiers exemples ne contiennent aucune clé. Ne pas enregistrer une vraie
+clé dans Git ou dans une ConfigMap.
 
 ### Tests légers sur Windows (8 Go)
 
@@ -71,37 +72,69 @@ joint via `host.minikube.internal:11435`. Les scripts existants de préparation
 et de lancement Apertus ciblent macOS Apple Silicon et téléchargent environ
 5,06 Go de poids : ils ne doivent pas être lancés sur le PC Windows de 8 Go.
 
-Pour basculer Mistral dans une session PowerShell sans écrire la clé dans
-l'historique, la saisir à l'invite sécurisée :
+Pour démarrer FastAPI sous Windows en développement local, depuis la racine du
+dépôt :
 
 ```powershell
+$env:KUBEAI_ENV = 'development'
 $env:LLM_PROVIDER = 'mistral-api'
-$secureKey = Read-Host 'Clé Mistral' -AsSecureString
-$env:MISTRAL_API_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Password
-```
-
-La variable est limitée au processus PowerShell et à ses enfants. Fermer la
-session pour l'effacer. L'absence de clé n'empêche pas le démarrage de FastAPI,
-la lecture des observations ou les réponses déterministes ; une génération
-nécessitant le modèle retourne une erreur explicite. `/llm/status` appelle
-réellement le fournisseur et ne doit être utilisé qu'après autorisation.
-
-Pour un essai réel ultérieur, ouvrir un PowerShell A et exécuter ces commandes
-après réception et autorisation de la clé :
-
-```powershell
-Set-Location (Resolve-Path .\agent)
-$env:LLM_PROVIDER = 'mistral-api'
-$env:MISTRAL_API_KEY_FILE = ''
-$secureKey = Read-Host 'Clé Mistral' -AsSecureString
-$env:MISTRAL_API_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Password
+Set-Location .\agent
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Dans un second PowerShell, confirmer le profil puis faire une seule requête avec
-un scénario synthétique. `GET /llm/status` appelle réellement `GET /v1/models`;
-les requêtes de chat ci-dessous effectuent une génération Mistral potentiellement
-facturable :
+Dans un autre PowerShell, depuis `agent/`, vérifier le profil et la présence
+d'une clé sans en afficher la valeur :
+
+```powershell
+$env:KUBEAI_ENV = 'development'
+$env:LLM_PROVIDER = 'mistral-api'
+..\.venv\Scripts\python.exe -c "from app.config import Settings; s=Settings.from_env(); print(f'profile={s.llm_provider} model={s.llm_model} key_configured={bool(s.llm_key())}')"
+```
+
+Cette commande ne contacte pas Mistral. `/llm/status`, en revanche, appelle
+réellement `GET /v1/models` et ne doit être utilisé qu'après autorisation.
+
+Pour un premier essai réel isolé, sans Kubernetes ni routes de diagnostic, le
+client `LLMService` existant peut envoyer une seule question synthétique. Cette
+commande effectue une génération potentiellement facturable ; l'exécuter
+uniquement après autorisation :
+
+```powershell
+Set-Location (Resolve-Path .\agent)
+$env:KUBEAI_ENV = 'development'
+$env:LLM_PROVIDER = 'mistral-api'
+$script = @'
+import asyncio
+import httpx
+from app.config import Settings
+from app.services.llm_service import LLMService
+
+async def main():
+    settings = Settings.from_env()
+    async with httpx.AsyncClient(
+        base_url=settings.llm_base_url.rstrip("/") + "/",
+        timeout=settings.llm_timeout,
+        trust_env=False,
+    ) as client:
+        result = await LLMService(client, settings).complete({
+            "messages": [{"role": "user", "content": (
+                "Scénario synthétique : un pod de test est marqué Failed. "
+                "Quelles observations vérifier avant d'avancer une cause ?"
+            )}],
+            "temperature": 0.2,
+            "max_tokens": 120,
+        })
+        print(result["choices"][0]["message"]["content"])
+
+asyncio.run(main())
+'@
+$script | ..\.venv\Scripts\python.exe -
+```
+
+Après un essai isolé autorisé, le backend FastAPI peut aussi être vérifié via
+Open WebUI avec les données d'observabilité disponibles. Une requête par cette
+voie peut nécessiter Kubernetes, Mimir et Loki. `GET /llm/status` reste un appel
+réel distinct à `GET /v1/models`.
 
 ```powershell
 $models = Invoke-RestMethod http://127.0.0.1:8000/v1/models

@@ -175,8 +175,11 @@ export MIMIR_URL=http://127.0.0.1:9009/prometheus
 
 Pour tester le chat hors du cluster, lancer aussi un tunnel vers Loki et configurer
 `LOKI_URL=http://127.0.0.1:3100` ainsi que `MISTRAL_API_KEY` dans l'environnement
-privé ou `MISTRAL_API_KEY_FILE` avec un fichier hors du dépôt. Aucun appel réel
-n'est nécessaire pour les tests unitaires. Les anciennes variables `LLM_*` de
+privé ou `MISTRAL_API_KEY_FILE` avec un fichier hors du dépôt. En développement
+local, le `.env` racine est chargé seulement si `KUBEAI_ENV=development` est
+défini explicitement ; les variables du processus restent prioritaires. Ce mode
+n'est pas activé dans Kubernetes. Aucun appel réel n'est nécessaire pour les
+tests unitaires. Les anciennes variables `LLM_*` de
 connexion locale ne sont lues que si `LLM_PROVIDER=local` (l'alias `apertus`
 reste accepté). Le backend ne télécharge pas de modèle et ne charge pas `.env`
 automatiquement. Les profils et les commandes Windows/Mac figurent dans

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
+import app.config as config_module
 from app.config import Settings
 from app.main import create_app
 from app.services.privacy import redact_data, redact_text
@@ -81,6 +82,7 @@ def events(response):
 
 
 def test_config_defaults_and_secret_is_not_in_repr(monkeypatch):
+    monkeypatch.delenv("KUBEAI_ENV", raising=False)
     for name in ("LLM_PROVIDER", "MISTRAL_API_KEY", "MISTRAL_MODEL", "MISTRAL_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     settings = Settings.from_env()
@@ -94,7 +96,40 @@ def test_config_defaults_and_secret_is_not_in_repr(monkeypatch):
         Settings(llm_base_url="http://api.mistral.ai/v1")
 
 
+def test_development_dotenv_loads_fake_key_without_overriding_environment(tmp_path, monkeypatch):
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "LLM_PROVIDER=mistral-api\nMISTRAL_API_KEY=fake-dotenv-key-123456\n"
+        "MISTRAL_MODEL=mistral-from-dotenv\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "_DEVELOPMENT_DOTENV_PATH", dotenv_path)
+    monkeypatch.setenv("KUBEAI_ENV", "development")
+    monkeypatch.setenv("MISTRAL_MODEL", "mistral-from-process")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.llm_provider == "mistral-api"
+    assert settings.llm_model == "mistral-from-process"
+    assert settings.llm_api_key == "fake-dotenv-key-123456"
+    assert "fake-dotenv-key-123456" not in repr(settings)
+
+
+def test_dotenv_is_not_loaded_without_explicit_development_mode(tmp_path, monkeypatch):
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("MISTRAL_API_KEY=fake-dotenv-key-123456\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "_DEVELOPMENT_DOTENV_PATH", dotenv_path)
+    monkeypatch.setenv("KUBEAI_ENV", "production")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.llm_api_key == ""
+
+
 def test_missing_projected_kubernetes_ca_does_not_block_local_startup(monkeypatch):
+    monkeypatch.delenv("KUBEAI_ENV", raising=False)
     monkeypatch.delenv("KUBERNETES_CA_FILE", raising=False)
     settings = Settings.from_env()
     if not Path(Settings.ca_file).is_file():
@@ -106,6 +141,7 @@ def test_missing_projected_kubernetes_ca_does_not_block_local_startup(monkeypatc
     ("local", "local"), ("apertus", "local"),
 ])
 def test_provider_profiles_and_legacy_aliases(monkeypatch, configured, expected):
+    monkeypatch.setenv("KUBEAI_ENV", "production")
     monkeypatch.setenv("LLM_PROVIDER", configured)
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     settings = Settings.from_env()
