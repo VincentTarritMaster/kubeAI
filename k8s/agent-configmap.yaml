@@ -4,6 +4,7 @@ metadata:
   name: kubeai-agent-config
   namespace: kubeai
 data:
+  KUBERNETES_ACCESS_MODE: in-cluster
   KUBERNETES_NAMESPACE: kubeai
   MIMIR_URL: http://mimir.monitoring.svc:9009/prometheus
   UPSTREAM_TIMEOUT_SECONDS: "5"

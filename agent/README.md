@@ -117,12 +117,15 @@ sur Minikube. `.env.example` documente les variables mais n'est pas chargé.
 
 | Variable | Défaut |
 |---|---|
+| `KUBERNETES_ACCESS_MODE` | `in-cluster`; choisir `kubeconfig` pour un lancement local hors cluster |
 | `KUBERNETES_NAMESPACE` | `kubeai` |
 | `MIMIR_URL` | `http://mimir.monitoring.svc:9009/prometheus` |
 | `PROMETHEUS_URL` | Ancien nom accepté en repli, lorsque `MIMIR_URL` n'est pas définie |
 | `KUBERNETES_API_URL` | `https://kubernetes.default.svc` |
 | `KUBERNETES_TOKEN_FILE` | Token projeté du ServiceAccount |
 | `KUBERNETES_CA_FILE` | Certificat CA projeté du cluster |
+| `KUBERNETES_KUBECONFIG_FILE` | `KUBECONFIG` ou `~/.kube/config`, en mode `kubeconfig` |
+| `KUBERNETES_CONTEXT` | Contexte requis explicitement en mode `kubeconfig` |
 | `UPSTREAM_TIMEOUT_SECONDS` | `5` |
 | `METRICS_MAX_AGE_SECONDS` | `60` |
 | `LOKI_URL` | `http://loki.monitoring.svc.cluster.local:3100` |
@@ -156,16 +159,18 @@ python3.13 -m venv agent/.venv
 agent/.venv/bin/python -m pip install -r agent/requirements.txt
 ```
 
-Sur une machine adaptée disposant d'un cluster, lancer le proxy Kubernetes et le tunnel Mimir :
+Si l'API Kubernetes du contexte n'est pas joignable directement depuis Windows
+ou macOS, le proxy `kubectl` reste un mode de repli :
 
 ```bash
-kubectl --context minikube proxy --port=8001
-kubectl --context minikube port-forward -n monitoring service/mimir 9009:9009
+kubectl --context <contexte> proxy --port=8001
+kubectl --context <contexte> -n monitoring port-forward --address 127.0.0.1 service/mimir 9009:9009
 ```
 
 Puis dans un troisième terminal, depuis `agent/` :
 
 ```bash
+export KUBERNETES_ACCESS_MODE=in-cluster
 export KUBERNETES_API_URL=http://127.0.0.1:8001
 export KUBERNETES_TOKEN_FILE=
 export KUBERNETES_CA_FILE=
@@ -185,8 +190,74 @@ reste accepté). Le backend ne télécharge pas de modèle et ne charge pas `.en
 automatiquement. Les profils et les commandes Windows/Mac figurent dans
 [`docs/architecture-llm-profiles.md`](../docs/architecture-llm-profiles.md).
 
-Le proxy utilise alors les droits de l'utilisateur kubectl ; les droits du
-ServiceAccount sont utilisés uniquement dans le déploiement Kubernetes.
+En mode `kubeconfig`, le client Kubernetes officiel charge l'identité du
+contexte sélectionné, ses mécanismes d'authentification et ses certificats.
+La validation TLS reste obligatoire. L'agent ne lit pas le token projeté du pod
+dans ce mode. L'accès est en lecture seule et exige `list` sur `nodes`, `pods`
+et `events`. Les permissions viennent de l'identité du kubeconfig ; le
+ServiceAccount `kubeai-agent` n'est utilisé qu'en mode `in-cluster`.
+
+### Préparer un lancement local Windows (commandes non exécutées ici)
+
+Choisir le contexte après avoir démarré le cluster séparément. Le contexte doit
+exister dans le kubeconfig et être fourni explicitement ; l'application ne
+change pas le contexte courant :
+
+```powershell
+$Context = 'docker-desktop'
+kubectl config get-contexts $Context
+kubectl --context $Context get --raw=/version
+kubectl --context $Context auth can-i list nodes
+kubectl --context $Context auth can-i list pods --all-namespaces
+kubectl --context $Context auth can-i list events --all-namespaces
+```
+
+Dans deux fenêtres PowerShell, ouvrir les tunnels limités à l'interface locale.
+Les ports correspondent aux Services `mimir` (9009) et `loki` (3100) dans le
+namespace `monitoring` :
+
+```powershell
+$Context = 'docker-desktop'
+kubectl --context $Context -n monitoring port-forward --address 127.0.0.1 service/mimir 9009:9009
+```
+
+```powershell
+$Context = 'docker-desktop'
+kubectl --context $Context -n monitoring port-forward --address 127.0.0.1 service/loki 3100:3100
+```
+
+Dans une troisième fenêtre, configurer et lancer FastAPI depuis la racine du
+dépôt. `KUBERNETES_KUBECONFIG_FILE` est facultatif si le fichier est au chemin
+par défaut. Le mode kubeconfig impose HTTPS et refuse un contexte absent ou un
+kubeconfig qui désactive la validation TLS :
+
+```powershell
+$Context = 'docker-desktop'
+$env:KUBEAI_ENV = 'development'
+$env:LLM_PROVIDER = 'mistral-api'
+$env:KUBERNETES_ACCESS_MODE = 'kubeconfig'
+$env:KUBERNETES_CONTEXT = $Context
+$env:KUBERNETES_KUBECONFIG_FILE = "$env:USERPROFILE\.kube\config"
+$env:MIMIR_URL = 'http://127.0.0.1:9009/prometheus'
+$env:LOKI_URL = 'http://127.0.0.1:3100'
+Set-Location .\agent
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Dans un quatrième terminal, vérifier le backend, l'inventaire, les métriques
+et les API locales Mimir/Loki sans déclencher de génération LLM :
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/cluster/inventory
+Invoke-RestMethod http://127.0.0.1:8000/cluster/status
+Invoke-RestMethod 'http://127.0.0.1:9009/prometheus/api/v1/query?query=up'
+Invoke-RestMethod 'http://127.0.0.1:3100/loki/api/v1/labels'
+```
+
+Pour arrêter chaque tunnel, utiliser `Ctrl+C` dans son terminal. `kubectl proxy`
+reste une solution de repli si l'API du cluster n'est pas joignable directement
+depuis Windows ; ce mode utilise les permissions de l'utilisateur `kubectl`.
 
 ## Tests
 

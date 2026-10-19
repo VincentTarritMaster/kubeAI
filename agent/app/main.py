@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-import ssl
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -9,6 +8,7 @@ from app.api.routes import router
 from app.api.chat import router as chat_router
 from app.clients.base import UpstreamError
 from app.clients.kubernetes_client import KubernetesClient
+from app.clients.kubernetes_connection import build_kubernetes_http_options
 from app.clients.prometheus_client import PrometheusClient
 from app.clients.loki_client import LokiClient
 from app.config import Settings
@@ -22,10 +22,9 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
     @asynccontextmanager
     async def lifespan(application):
         config = settings or Settings.from_env()
-        verify = ssl.create_default_context(cafile=config.ca_file) if config.ca_file else True
+        kubernetes_options = build_kubernetes_http_options(config)
         async with (
-            httpx.AsyncClient(base_url=config.kubernetes_url, verify=verify,
-                              timeout=config.request_timeout, trust_env=False,
+            httpx.AsyncClient(**kubernetes_options, timeout=config.request_timeout, trust_env=False,
                               transport=kubernetes_transport) as kubernetes_http,
             httpx.AsyncClient(base_url=config.prometheus_url, timeout=config.request_timeout,
                               trust_env=False, transport=prometheus_transport) as prometheus_http,

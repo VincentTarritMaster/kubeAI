@@ -25,7 +25,10 @@ def _load_development_dotenv():
 @dataclass(frozen=True)
 class Settings:
     namespace: str = "kubeai"
+    kubernetes_access_mode: str = "in-cluster"
     kubernetes_url: str = "https://kubernetes.default.svc"
+    kubeconfig_file: str = ""
+    kubernetes_context: str = ""
     # Mimir expose l'API Prometheus sous ce préfixe ; le client reste compatible PromQL.
     prometheus_url: str = "http://mimir.monitoring.svc:9009/prometheus"
     token_file: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"
@@ -57,6 +60,12 @@ class Settings:
                 object.__setattr__(self, "llm_timeout", 180.0)
         if len(self.namespace) > 63 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", self.namespace):
             raise ValueError("KUBERNETES_NAMESPACE doit être un nom de namespace valide")
+        access_mode = self.kubernetes_access_mode.strip().lower()
+        object.__setattr__(self, "kubernetes_access_mode", access_mode)
+        if access_mode not in {"in-cluster", "kubeconfig"}:
+            raise ValueError("KUBERNETES_ACCESS_MODE doit être in-cluster ou kubeconfig")
+        if access_mode == "kubeconfig" and not self.kubernetes_context.strip():
+            raise ValueError("KUBERNETES_CONTEXT doit être défini en mode kubeconfig")
         if not 0 < self.request_timeout <= 30:
             raise ValueError("UPSTREAM_TIMEOUT_SECONDS doit être compris entre 0 et 30")
         if not 15 <= self.metrics_max_age <= 300:
@@ -81,6 +90,7 @@ class Settings:
         _load_development_dotenv()
         provider = os.getenv("LLM_PROVIDER", cls.llm_provider).strip().lower()
         local = provider in {"local", "apertus"}
+        access_mode = os.getenv("KUBERNETES_ACCESS_MODE", "in-cluster").strip().lower()
         ca_file = os.getenv("KUBERNETES_CA_FILE", cls.ca_file)
         # Service-account CA files are projected only inside Kubernetes. On a
         # developer machine, use the OS trust store and let API requests report
@@ -89,7 +99,10 @@ class Settings:
             ca_file = ""
         return cls(
             namespace=os.getenv("KUBERNETES_NAMESPACE", cls.namespace),
+            kubernetes_access_mode=access_mode,
             kubernetes_url=os.getenv("KUBERNETES_API_URL", cls.kubernetes_url),
+            kubeconfig_file=os.getenv("KUBERNETES_KUBECONFIG_FILE", os.getenv("KUBECONFIG", "")),
+            kubernetes_context=os.getenv("KUBERNETES_CONTEXT", ""),
             prometheus_url=os.getenv("MIMIR_URL", os.getenv("PROMETHEUS_URL", cls.prometheus_url)),
             token_file=os.getenv("KUBERNETES_TOKEN_FILE", cls.token_file),
             ca_file=ca_file,
@@ -109,6 +122,8 @@ class Settings:
 
     def token(self):
         # Relire le fichier à chaque requête : les tokens projetés sont renouvelés.
+        if self.kubernetes_access_mode != "in-cluster":
+            return None
         return Path(self.token_file).read_text().strip() if self.token_file else None
 
     def llm_key(self):
