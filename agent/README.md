@@ -199,6 +199,21 @@ Ces fichiers utilisent des réponses HTTP simulées et bloquent les sorties HTTP
 réelles ; ils ne nécessitent aucun cluster, clé Mistral ou LLM.
 Les tests live restent exclus.
 
+Les tests HTTP synthétiques des démonstrations A/B/C démarrent le vrai
+`app.main:app` avec Uvicorn sur une socket loopback éphémère. Seuls les clients
+Kubernetes, Mimir, Loki et LLM sont remplacés par les fixtures existantes; aucun
+endpoint de simulation n'est ajouté à l'application. Exécuter séparément :
+
+```powershell
+Set-Location agent
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+..\.venv\Scripts\python.exe -B -m pytest tests\integration\test_local_http_demos.py -q -p no:cacheprovider
+```
+
+Les réponses testées proviennent uniquement de données synthétiques et ne
+décrivent pas un cluster réel. Le processus Uvicorn s'arrête à la fin de chaque
+cas.
+
 Depuis `agent/` :
 
 ```bash

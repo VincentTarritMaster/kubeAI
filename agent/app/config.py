@@ -65,12 +65,18 @@ class Settings:
     def from_env(cls):
         provider = os.getenv("LLM_PROVIDER", cls.llm_provider).strip().lower()
         local = provider in {"local", "apertus"}
+        ca_file = os.getenv("KUBERNETES_CA_FILE", cls.ca_file)
+        # Service-account CA files are projected only inside Kubernetes. On a
+        # developer machine, use the OS trust store and let API requests report
+        # the cluster as unavailable instead of failing application startup.
+        if "KUBERNETES_CA_FILE" not in os.environ and not Path(ca_file).is_file():
+            ca_file = ""
         return cls(
             namespace=os.getenv("KUBERNETES_NAMESPACE", cls.namespace),
             kubernetes_url=os.getenv("KUBERNETES_API_URL", cls.kubernetes_url),
             prometheus_url=os.getenv("MIMIR_URL", os.getenv("PROMETHEUS_URL", cls.prometheus_url)),
             token_file=os.getenv("KUBERNETES_TOKEN_FILE", cls.token_file),
-            ca_file=os.getenv("KUBERNETES_CA_FILE", cls.ca_file),
+            ca_file=ca_file,
             request_timeout=float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "5")),
             metrics_max_age=int(os.getenv("METRICS_MAX_AGE_SECONDS", "60")),
             loki_url=os.getenv("LOKI_URL", cls.loki_url),

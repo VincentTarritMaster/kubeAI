@@ -1,5 +1,6 @@
 """Offline contract tests for Mistral and the existing Open WebUI API."""
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import httpx
@@ -91,6 +92,13 @@ def test_config_defaults_and_secret_is_not_in_repr(monkeypatch):
     assert "unit-secret-123456" not in repr(Settings.from_env())
     with pytest.raises(ValueError, match="HTTPS"):
         Settings(llm_base_url="http://api.mistral.ai/v1")
+
+
+def test_missing_projected_kubernetes_ca_does_not_block_local_startup(monkeypatch):
+    monkeypatch.delenv("KUBERNETES_CA_FILE", raising=False)
+    settings = Settings.from_env()
+    if not Path(Settings.ca_file).is_file():
+        assert settings.ca_file == ""
 
 
 @pytest.mark.parametrize("configured,expected", [

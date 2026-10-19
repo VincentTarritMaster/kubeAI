@@ -86,6 +86,48 @@ la lecture des observations ou les réponses déterministes ; une génération
 nécessitant le modèle retourne une erreur explicite. `/llm/status` appelle
 réellement le fournisseur et ne doit être utilisé qu'après autorisation.
 
+Pour un essai réel ultérieur, ouvrir un PowerShell A et exécuter ces commandes
+après réception et autorisation de la clé :
+
+```powershell
+Set-Location (Resolve-Path .\agent)
+$env:LLM_PROVIDER = 'mistral-api'
+$env:MISTRAL_API_KEY_FILE = ''
+$secureKey = Read-Host 'Clé Mistral' -AsSecureString
+$env:MISTRAL_API_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Password
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Dans un second PowerShell, confirmer le profil puis faire une seule requête avec
+un scénario synthétique. `GET /llm/status` appelle réellement `GET /v1/models`;
+les requêtes de chat ci-dessous effectuent une génération Mistral potentiellement
+facturable :
+
+```powershell
+$models = Invoke-RestMethod http://127.0.0.1:8000/v1/models
+$models.data | Select-Object id,name
+Invoke-RestMethod http://127.0.0.1:8000/llm/status
+$body = @{ model='kubeai'; messages=@(@{role='user';content='Scénario synthétique : un pod de test est signalé Failed. Quelles observations confirmerais-tu avant de proposer une cause ?'}) } | ConvertTo-Json -Depth 5
+Invoke-RestMethod http://127.0.0.1:8000/v1/chat/completions -Method Post -ContentType 'application/json' -Body $body
+```
+
+Pour vérifier le streaming après cette première réponse, construire une requête
+`stream = $true` puis utiliser `curl.exe -N` :
+
+```powershell
+$streamBody = @{ model='kubeai'; stream=$true; messages=@(@{role='user';content='Scénario synthétique : un pod de test est signalé Failed. Quelles observations confirmerais-tu avant de proposer une cause ?'}) } | ConvertTo-Json -Depth 5 -Compress
+curl.exe -N http://127.0.0.1:8000/v1/chat/completions -H 'Content-Type: application/json' --data-binary $streamBody
+```
+
+Arrêter Uvicorn avec `Ctrl+C` dans le PowerShell A, puis effacer la variable
+secrète dans cette même session :
+
+```powershell
+Remove-Item Env:MISTRAL_API_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:MISTRAL_API_KEY_FILE -ErrorAction SilentlyContinue
+Remove-Item Env:LLM_PROVIDER -ErrorAction SilentlyContinue
+```
+
 ### Mac Apple Silicon — profil Apertus existant
 
 Sur un Mac adapté, les commandes actuelles de préparation du modèle sont
