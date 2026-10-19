@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 import json
@@ -5,6 +6,7 @@ import json
 from app.clients.base import UpstreamError
 from app.models import ChatRequest
 from app.services.privacy import redact_data, redact_text
+from app.services.global_health import assess, focus_note, model_focus, render
 
 PROMPT = (Path(__file__).resolve().parents[1] / "prompts/system_prompt.txt").read_text(encoding="utf-8")
 CHAT_MODEL = "kubeai"
@@ -22,6 +24,42 @@ class DiagnosisService:
         except (OSError, UnicodeError):
             key = ""
         return (key,) if key else ()
+
+    async def global_health(self):
+        """Global health for chat and diagnosis; all facts precede optional Mistral use."""
+        inventory, usage = await asyncio.gather(
+            self.cluster_status.inventory(),
+            self.cluster_status.prometheus.cluster_usage(datetime.now(timezone.utc).timestamp()),
+            return_exceptions=True,
+        )
+        if isinstance(inventory, Exception):
+            raise inventory
+        mimir_error = usage.message if isinstance(usage, UpstreamError) else (
+            "Mimir read failed" if isinstance(usage, Exception) else None)
+        report = assess(inventory, None if isinstance(usage, Exception) else usage, mimir_error)
+        report = redact_data(report, self.sensitive_values())
+        ai_note = "**Analyse IA avancée :** indisponible ; le bilan ci-dessus est déterministe."
+        if report["state"] != "indéterminé" or report["nodes"]["total"] is not None \
+                or report["pods"]["total"] is not None:
+            prompt = (
+                "Choisis uniquement une priorité étayée par le relevé. Réponds par un objet JSON "
+                "avec la seule clé focus : nodes, pods, restarts, events, availability ou none. "
+                "N'ajoute aucun fait, texte libre, cause ou commande."
+            )
+            try:
+                response = await self.llm.complete({
+                    "messages": [{"role": "system", "content": prompt},
+                                 {"role": "user", "content": json.dumps(report, ensure_ascii=False)}],
+                    "temperature": 0, "max_tokens": 32,
+                })
+                focus = model_focus(report, response["choices"][0]["message"]["content"])
+                if focus:
+                    ai_note = focus_note(focus)
+                else:
+                    ai_note = "**Analyse IA avancée :** proposition non étayée écartée ; le bilan reste déterministe."
+            except (UpstreamError, KeyError, IndexError, TypeError, ValueError):
+                pass
+        return render(report, ai_note=ai_note), report
 
     async def observation(self):
         snapshot = await self.cluster_status.status()

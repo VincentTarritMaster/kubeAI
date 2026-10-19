@@ -123,12 +123,15 @@ les tunnels locaux et les exemples de requêtes.
 Le backend FastAPI dans [agent/](agent/README.md) expose `GET /cluster/status` :
 inventaire des pods de `kubeai`, disponibilité, erreurs, redémarrages, CPU et mémoire.
 Les données absentes et pannes des sources sont signalées explicitement.
+`GET /cluster/inventory` ajoute une lecture bornée des nœuds, des pods de tous les
+namespaces et des événements, avec disponibilité indiquée pour chaque source.
 
 ```bash
 kubectl --context minikube port-forward -n kubeai service/kubeai-agent 8000:8000
 ```
 
-Consulter <http://127.0.0.1:8000/cluster/status> ou la documentation interactive
+Consulter <http://127.0.0.1:8000/cluster/status>,
+<http://127.0.0.1:8000/cluster/inventory> ou la documentation interactive
 <http://127.0.0.1:8000/docs>. Voir le [contrat API](docs/api-contract.md) pour le
 périmètre et les unités. `POST /diagnose` retourne une analyse avec les observations,
 et `/v1/chat/completions` fournit le streaming utilisé par Open WebUI.

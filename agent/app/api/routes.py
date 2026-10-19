@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 
-from app.models import ClusterStatus
+from app.models import ClusterInventory, ClusterStatus
 
 router = APIRouter()
 
@@ -30,3 +30,16 @@ async def cluster_status(request: Request):
     apply; it does not represent zero usage.
     """
     return await request.app.state.cluster_status.status()
+
+
+@router.get(
+    "/cluster/inventory", response_model=ClusterInventory, tags=["cluster"],
+    operation_id="get_cluster_inventory",
+)
+async def cluster_inventory(request: Request):
+    """Read bounded node, pod and event inventories across the cluster.
+
+    Each source reports its own availability. Missing data is never presented as
+    an empty, healthy inventory.
+    """
+    return await request.app.state.cluster_status.inventory()

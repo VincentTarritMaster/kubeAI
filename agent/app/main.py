@@ -43,8 +43,8 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
             yield
 
     application = FastAPI(
-        title="kubeAI Agent", version="0.2.0",
-        description="Pod states and metrics for the configured Kubernetes namespace. Read-only API.",
+        title="kubeAI Agent", version="0.3.0",
+        description="Namespace metrics and bounded cluster-wide Kubernetes inventory. Read-only API.",
         lifespan=lifespan,
     )
 

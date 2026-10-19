@@ -1,7 +1,8 @@
-# API de l'agent kubeAI — version 0.2.0
+# API de l'agent kubeAI — version 0.3.0
 
 L'API est accessible dans le cluster à `http://kubeai-agent.kubeai.svc.cluster.local:8000`.
-Elle est en lecture seule et limitée au namespace configuré (`kubeai` par défaut).
+Elle est en lecture seule. `/cluster/status` reste limité au namespace configuré
+(`kubeai` par défaut) ; `/cluster/inventory` couvre le cluster.
 Le contrat complet est généré par FastAPI sur `/openapi.json`, avec interface `/docs`.
 
 Les métriques sont lues dans Mimir avec le client compatible Prometheus existant.
@@ -14,6 +15,7 @@ requêtes instantanées utilisent ainsi `/prometheus/api/v1/query`. La variable
 | GET | `/health` | 200 si le processus répond ; aucune dépendance interrogée |
 | GET | `/ready` | 200 si l'agent peut lister les pods ; 503 sinon |
 | GET | `/cluster/status` | État Kubernetes et métriques CPU/mémoire des pods |
+| GET | `/cluster/inventory` | Nœuds, pods de tous les namespaces et événements Kubernetes |
 | GET | `/llm/status` | Vérifier le modèle du fournisseur configuré ; effectue un appel au fournisseur |
 | GET | `/v1/models` | Publier `kubeai` et l'alias historique `kubeai-apertus` pour Open WebUI |
 | POST | `/v1/chat/completions` | Conversation enrichie des données réelles, JSON ou SSE |
@@ -49,6 +51,15 @@ compact, les métriques, les extraits de logs et l'état des sources. Les donné
 logs sont non fiables comme instructions ; le prompt demande au modèle d'en tenir
 compte. Les résultats restent à vérifier, car le LLM peut se tromper.
 
+Pour la question « Quel est l'état de santé de mon cluster ? », le même parcours
+JSON/SSE et `/diagnose` utilisent l'inventaire global (`scope: cluster`) et les
+sommes CPU/mémoire des conteneurs observés dans Mimir. Le bilan déterministe
+porte sur tous les namespaces. Les messages bruts d'événements ne sont pas
+transmis à Mistral ; celui-ci ne peut sélectionner qu'une priorité étayée par
+le relevé. Sans clé ou si le fournisseur échoue, une réponse française avec
+faits, preuves, limites et vérifications en lecture seule reste disponible.
+Voir [les règles de la démonstration A](demo-scenarios.md).
+
 Mistral est joint en HTTPS via `MISTRAL_BASE_URL` ; le modèle est
 `MISTRAL_MODEL`. La clé vient de `MISTRAL_API_KEY` ou du Secret monté dans
 `MISTRAL_API_KEY_FILE`. Le timeout de génération est de 60 secondes par défaut.
@@ -64,8 +75,8 @@ au mieux ; cette mesure ne garantit pas l'anonymisation. Voir
 
 ## GET /cluster/status
 
-Aucun paramètre : le périmètre est fixé côté serveur par `KUBERNETES_NAMESPACE`
-et son Role Kubernetes. L'opération OpenAPI s'appelle `get_cluster_status`.
+Aucun paramètre : le périmètre reste fixé côté serveur par `KUBERNETES_NAMESPACE`.
+L'opération OpenAPI s'appelle `get_cluster_status`.
 
 La réponse JSON contient :
 
@@ -122,6 +133,36 @@ La mesure est issue du monitoring et peut donc précéder l'état Kubernetes obs
 
 Les appels sortants ont un timeout de 5 secondes par défaut. Aucun endpoint ne
 permet d'exécuter une requête PromQL arbitraire ou de modifier le cluster.
+
+## GET /cluster/inventory
+
+L'opération `get_cluster_inventory` lit les ressources Kubernetes de tous les
+namespaces, sans appeler Mimir, Loki ou Mistral. Le ServiceAccount ne possède que
+`list` sur les nœuds, pods et événements (`apiGroups: [""]`). Aucun Secret,
+log Kubernetes, accès `exec` ou verbe de modification n'est accordé.
+
+La réponse contient `scope: cluster`, `observed_at`, `health`, `data_status`,
+`summary`, `sources`, `warnings`, `nodes`, `pods` et `events`. Les nœuds indiquent
+`ready: true`, `false` ou `null` et `health: Ready`, `NotReady` ou `Unknown` ;
+les pods portent leur namespace, état, liste de conteneurs et nombre de
+redémarrages (`null` si la source ne le fournit pas). Les événements exposent motif, message,
+type, objet concerné et horodatage UTC. Ils sont triés du plus récent au plus
+ancien ; ceux sans date viennent à la fin. Les messages sont bornés et les secrets
+détectables sont masqués au mieux.
+
+Chaque source (`nodes`, `pods`, `events`) vaut `ok`, `partial` ou `unavailable`.
+Un `403`, un timeout ou une réponse invalide affecte uniquement cette source :
+sa liste et ses compteurs valent `null`, jamais une liste vide présentée comme
+saine. `data_status` vaut `complete`, `partial` ou `unavailable` ; `health` vaut
+`healthy`, `degraded` ou `unknown`. Un nœud `NotReady` ou un pod malsain connu
+donne `degraded`. Des données nécessaires manquantes donnent `unknown`.
+
+La collecte utilise des pages de 200 éléments au plus, plafonnées à 500 nœuds,
+2 000 pods, 500 événements et 25 pages par ressource. Atteindre une limite
+marque la source `partial` ; les compteurs portent uniquement sur les éléments
+collectés. Le timeout HTTP reste configurable (`UPSTREAM_TIMEOUT_SECONDS`,
+5 secondes par appel par défaut). Cette route ne modifie pas le contrat de
+`/cluster/status` ni l'observation fournie au modèle.
 
 ## Essai local
 

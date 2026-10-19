@@ -22,6 +22,13 @@ class MetricsSnapshot:
     warnings: list[str]
 
 
+@dataclass
+class ClusterUsage:
+    cpu_cores: float | None
+    memory_working_set_bytes: int | None
+    warnings: list[str]
+
+
 class PrometheusClient:
     def __init__(self, http: httpx.AsyncClient, settings: Settings):
         self.http = http
@@ -69,3 +76,26 @@ class PrometheusClient:
             self._query(cpu_query, timestamp), self._query(memory_query, timestamp),
         )
         return MetricsSnapshot(results[0][0], results[1][0], results[0][1] + results[1][1])
+
+    async def cluster_usage(self, timestamp: float) -> ClusterUsage:
+        """Observed pod-container usage across namespaces, not node capacity."""
+        selector = 'job="kubernetes-cadvisor",namespace!="",pod!="",container!="",container!="POD"'
+        cpu = f"container_cpu_usage_seconds_total{{{selector}}}"
+        memory = f"container_memory_working_set_bytes{{{selector}}}"
+        age = self.settings.metrics_max_age
+        queries = (
+            f"sum(rate({cpu}[2m]) and (time() - timestamp({cpu}) < {age}))",
+            f"sum({memory} and (time() - timestamp({memory}) < {age}))",
+        )
+        results = await asyncio.gather(*(self._query(query, timestamp) for query in queries))
+        cpu_samples, memory_samples = results[0][0], results[1][0]
+        warnings = results[0][1] + results[1][1]
+        if len(cpu_samples) > 1 or len(memory_samples) > 1:
+            raise UpstreamError("mimir", "Invalid aggregate Mimir result")
+        if not cpu_samples or not memory_samples:
+            warnings.append("Cluster CPU or memory samples are missing")
+        return ClusterUsage(
+            cpu_cores=cpu_samples[0].value if cpu_samples else None,
+            memory_working_set_bytes=round(memory_samples[0].value) if memory_samples else None,
+            warnings=warnings,
+        )

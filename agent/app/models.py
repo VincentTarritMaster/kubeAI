@@ -62,6 +62,67 @@ class ClusterStatus(BaseModel):
     pods: list[PodStatus]
 
 
+class NodeStatus(BaseModel):
+    name: str
+    ready: bool | None
+    health: Literal["Ready", "NotReady", "Unknown"]
+    reason: str | None = None
+    message: str | None = None
+
+
+class ClusterContainerStatus(ContainerStatus):
+    ready: bool | None = None
+    restarts: int | None = None
+
+
+class ClusterPodStatus(BaseModel):
+    name: str
+    namespace: str
+    uid: str | None = None
+    node: str | None = None
+    phase: str
+    ready: bool | None = None
+    health: Literal["healthy", "unhealthy", "completed", "terminating", "unknown"]
+    restarts: int | None = None
+    containers: list[ClusterContainerStatus]
+    issues: list[str]
+
+
+class KubernetesEvent(BaseModel):
+    name: str
+    namespace: str | None = None
+    involved_kind: str | None = None
+    involved_name: str | None = None
+    type: str | None = None
+    reason: str | None = None
+    message: str | None = None
+    count: int | None = None
+    observed_at: datetime | None = None
+
+
+class ClusterInventorySummary(BaseModel):
+    nodes: int | None = None
+    nodes_ready: int | None = None
+    nodes_not_ready: int | None = None
+    pods: int | None = None
+    pods_unhealthy: int | None = None
+    restarts: int | None = None
+    events: int | None = None
+
+
+class ClusterInventory(BaseModel):
+    observed_at: datetime
+    scope: Literal["cluster"] = "cluster"
+    health: Literal["healthy", "degraded", "unknown"]
+    data_status: Literal["complete", "partial", "unavailable"]
+    summary: ClusterInventorySummary
+    sources: dict[str, SourceStatus]
+    warnings: list[str]
+    nodes: list[NodeStatus] | None
+    pods: list[ClusterPodStatus] | None
+    events: list[KubernetesEvent] | None
+
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str = Field(max_length=12000)

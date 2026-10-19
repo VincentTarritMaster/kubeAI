@@ -11,6 +11,7 @@ from app.models import ChatMessage, ChatRequest, DiagnosisRequest
 from app.services.diagnosis import CHAT_MODEL, source_note
 from app.services.source_notes import SourceNoteFilter, filter_source_notes
 from app.services.health_answer import health_answer
+from app.services.global_health import cluster_health_question
 from app.services.privacy import redact_text
 
 router = APIRouter()
@@ -41,6 +42,9 @@ def completion(content, model=CHAT_MODEL):
 
 
 async def finish_nonstream(service, chat):
+    if cluster_health_question(chat):
+        text, observation = await service.global_health()
+        return completion(text, chat.model), observation
     payload, observation = await service.prepare(chat)
     grounded = health_answer(chat, observation)
     if grounded is not None:
@@ -118,6 +122,20 @@ async def chat_completions(body: ChatRequest, request: Request):
     if not body.stream:
         answer, _ = await finish_nonstream(service, body)
         return answer
+
+    if cluster_health_question(body):
+        answer, _ = await service.global_health()
+        common = {"id": "chatcmpl-" + uuid.uuid4().hex, "object": "chat.completion.chunk",
+                  "created": int(time.time()), "model": body.model}
+
+        async def cluster_events():
+            yield _event(common, role="assistant")
+            for part in answer.splitlines(keepends=True):
+                yield _event(common, content=part)
+            yield _event(common, finish_reason="stop")
+            yield "data: [DONE]\n\n"
+
+        return _stream_response(cluster_events())
 
     payload, observation = await service.prepare(body)
     grounded = health_answer(body, observation)

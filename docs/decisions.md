@@ -17,5 +17,5 @@ Les autres éléments restent ouverts et devront être validés collectivement.
 | Transition Prometheus → Mimir | Serveur Prometheus retiré du rendu cible ; anciens manifests conservés ; transition d'un cluster existant après validation, sans suppression de PVC |
 | Poste Windows 8 Go | Tests unitaires et rendu statique uniquement ; validation Kubernetes Mimir à réaliser sur une machine adaptée par Kevin ou Vincent |
 | Déploiement cloud | Étape ultérieure ; non implémentée dans l'intégration statique Mimir |
-| Droits RBAC de l’agent | En local : `list pods` dans `kubeai` uniquement ; logs via Loki, événements à ajouter |
+| Droits RBAC de l’agent | `ClusterRole` : `list` uniquement sur `nodes`, `pods`, `events` ; aucun Secret, `exec` ou verbe de modification ; logs via Loki |
 | Remédiation automatique ou recommandations uniquement | À décider |

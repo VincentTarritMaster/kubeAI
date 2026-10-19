@@ -4,7 +4,128 @@ from datetime import datetime, timezone
 from app.clients.base import UpstreamError
 from app.clients.kubernetes_client import KubernetesClient
 from app.clients.prometheus_client import MetricsSnapshot, PrometheusClient
-from app.models import ClusterStatus, ContainerStatus, PodMetrics, PodStatus, SourceStatus, Summary
+from app.models import (ClusterContainerStatus, ClusterInventory, ClusterInventorySummary, ClusterPodStatus,
+                        ClusterStatus, ContainerStatus, KubernetesEvent, NodeStatus,
+                        PodMetrics, PodStatus, SourceStatus, Summary)
+from app.services.privacy import redact_text
+
+
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _text(value):
+    return value if isinstance(value, str) else None
+
+
+def _safe_text(value, limit=240):
+    text = _text(value)
+    return redact_text(text[:4096])[:limit] if text else None
+
+
+def _count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _timestamp(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except ValueError:
+        return None
+
+
+def node_status(raw: dict) -> NodeStatus:
+    metadata, status = _dict(raw.get("metadata")), _dict(raw.get("status"))
+    conditions = status.get("conditions")
+    conditions = conditions if isinstance(conditions, list) else []
+    ready_condition = next((item for item in conditions if isinstance(item, dict)
+                            and item.get("type") == "Ready"), {})
+    state = ready_condition.get("status")
+    ready = True if state == "True" else False if state == "False" else None
+    return NodeStatus(
+        name=_text(metadata.get("name")) or "",
+        ready=ready, health="Ready" if ready is True else "NotReady" if ready is False else "Unknown",
+        reason=_safe_text(ready_condition.get("reason")),
+        message=_safe_text(ready_condition.get("message"), 512),
+    )
+
+
+def cluster_pod_status(raw: dict) -> ClusterPodStatus:
+    metadata, status, spec = (_dict(raw.get(field)) for field in ("metadata", "status", "spec"))
+    containers = []
+    restart_counts = []
+    for field, kind in (("containerStatuses", "app"), ("initContainerStatuses", "init")):
+        entries = status.get(field)
+        for item in entries if isinstance(entries, list) else []:
+            if not isinstance(item, dict):
+                continue
+            state = _dict(item.get("state"))
+            state_name = next((key for key in ("running", "waiting", "terminated") if key in state), "unknown")
+            current = _dict(state.get(state_name))
+            previous = _dict(_dict(item.get("lastState")).get("terminated"))
+            restarts = _count(item.get("restartCount"))
+            restart_counts.append(restarts)
+            containers.append(ClusterContainerStatus(
+                name=_text(item.get("name")) or "", container_id=_text(item.get("containerID")),
+                kind=kind, ready=item.get("ready") if isinstance(item.get("ready"), bool) else None,
+                restarts=restarts,
+                state=state_name, reason=_safe_text(current.get("reason")),
+                last_termination_reason=_safe_text(previous.get("reason")),
+                last_exit_code=previous.get("exitCode") if isinstance(previous.get("exitCode"), int)
+                and not isinstance(previous.get("exitCode"), bool) else None,
+            ))
+    phase = _text(status.get("phase")) or "Unknown"
+    conditions = status.get("conditions")
+    conditions = conditions if isinstance(conditions, list) else []
+    ready_condition = next((item for item in conditions if isinstance(item, dict)
+                            and item.get("type") == "Ready"), {})
+    state = ready_condition.get("status")
+    ready = True if state == "True" else False if state == "False" else None
+    if metadata.get("deletionTimestamp"):
+        health = "terminating"
+    elif phase == "Succeeded":
+        health = "completed"
+    elif phase == "Running" and ready is True:
+        health = "healthy"
+    elif phase in {"Pending", "Failed"} or (phase == "Running" and ready is False):
+        health = "unhealthy"
+    else:
+        health = "unknown"
+    issues = [f"{item.name}: {item.reason}" for item in containers
+              if item.reason and item.reason != "Completed"]
+    if health == "unhealthy" and not issues:
+        issues.append(_text(status.get("reason")) or f"Pod {phase}, Ready={str(ready).lower()}")
+    return ClusterPodStatus(
+        name=_text(metadata.get("name")) or "", namespace=_text(metadata.get("namespace")) or "",
+        uid=_text(metadata.get("uid")), node=_text(spec.get("nodeName")), phase=phase,
+        ready=ready, health=health,
+        restarts=sum(restart_counts) if isinstance(status.get("containerStatuses"), list)
+                 and all(count is not None for count in restart_counts) else None,
+        containers=containers, issues=[redact_text(issue)[:240] for issue in issues],
+    )
+
+
+def event_status(raw: dict) -> KubernetesEvent:
+    metadata = _dict(raw.get("metadata"))
+    involved = _dict(raw.get("involvedObject") or raw.get("regarding"))
+    series = _dict(raw.get("series"))
+    observed_at = next((parsed for parsed in (
+        _timestamp(raw.get("eventTime")), _timestamp(series.get("lastObservedTime")),
+        _timestamp(raw.get("lastTimestamp")), _timestamp(raw.get("firstTimestamp")),
+        _timestamp(metadata.get("creationTimestamp")),
+    ) if parsed is not None), None)
+    message = _text(raw.get("message")) or _text(raw.get("note"))
+    return KubernetesEvent(
+        name=_text(metadata.get("name")) or "",
+        namespace=_text(metadata.get("namespace")) or _text(involved.get("namespace")),
+        involved_kind=_text(involved.get("kind")), involved_name=_text(involved.get("name")),
+        type=_text(raw.get("type")), reason=_safe_text(raw.get("reason")),
+        message=_safe_text(message, 1024),
+        count=_count(raw.get("count")), observed_at=observed_at,
+    )
 
 
 def pod_status(raw: dict, snapshot: MetricsSnapshot) -> PodStatus:
@@ -86,13 +207,15 @@ class ClusterStatusService:
 
     async def status(self) -> ClusterStatus:
         observed_at = datetime.now(timezone.utc)
-        raw_pods, snapshot = await asyncio.gather(
-            self.kubernetes.list_pods(), self.prometheus.snapshot(observed_at.timestamp()),
+        pod_collection, snapshot = await asyncio.gather(
+            self.kubernetes.list_namespace_pods(), self.prometheus.snapshot(observed_at.timestamp()),
             return_exceptions=True,
         )
-        if isinstance(raw_pods, Exception):
-            raise raw_pods
+        if isinstance(pod_collection, Exception):
+            raise pod_collection
         warnings = []
+        if pod_collection.truncated:
+            warnings.append("Kubernetes pod inventory reached its collection limit")
         if isinstance(snapshot, UpstreamError):
             mimir_status = SourceStatus(status="unavailable", message=snapshot.message)
             warnings.append(snapshot.message)
@@ -102,7 +225,7 @@ class ClusterStatusService:
         else:
             mimir_status = SourceStatus(status="ok")
         warnings.extend(snapshot.warnings)
-        pods = sorted((pod_status(p, snapshot) for p in raw_pods), key=lambda pod: pod.name)
+        pods = sorted((pod_status(p, snapshot) for p in pod_collection.items), key=lambda pod: pod.name)
         missing = [p.name for p in pods if p.metrics.status in {"partial", "unavailable"}]
         if missing:
             warnings.append("Missing or incomplete metrics: " + ", ".join(missing))
@@ -121,9 +244,86 @@ class ClusterStatusService:
             health = "degraded"
         elif any(p.health == "unknown" for p in pods):
             health = "unknown"
+        if pod_collection.truncated and health != "degraded":
+            health = "unknown"
         return ClusterStatus(
             observed_at=observed_at, namespace=self.kubernetes.settings.namespace,
             health=health, data_status="partial" if warnings else "complete", summary=summary,
-            sources={"kubernetes": SourceStatus(status="ok"), "mimir": mimir_status},
+            sources={"kubernetes": SourceStatus(
+                status="partial" if pod_collection.truncated else "ok",
+                message="Pod collection limit reached" if pod_collection.truncated else None,
+            ), "mimir": mimir_status},
             warnings=warnings, pods=pods,
+        )
+
+    async def inventory(self) -> ClusterInventory:
+        observed_at = datetime.now(timezone.utc)
+        results = await asyncio.gather(
+            self.kubernetes.list_nodes(), self.kubernetes.list_all_pods(), self.kubernetes.list_events(),
+            return_exceptions=True,
+        )
+        sources = {}
+        warnings = []
+        values = {}
+        for name, result in zip(("nodes", "pods", "events"), results):
+            if isinstance(result, Exception):
+                message = result.message if isinstance(result, UpstreamError) else "Unexpected Kubernetes read failure"
+                sources[name] = SourceStatus(status="unavailable", message=message)
+                warnings.append(f"{name}: {message}")
+                values[name] = None
+                continue
+            values[name] = result.items
+            if result.truncated:
+                message = f"{name}: Kubernetes collection limit reached"
+                sources[name] = SourceStatus(status="partial", message=message)
+                warnings.append(message)
+            else:
+                sources[name] = SourceStatus(status="ok")
+
+        nodes = sorted((node_status(item) for item in values["nodes"]), key=lambda item: item.name) \
+            if values["nodes"] is not None else None
+        pods = sorted((cluster_pod_status(item) for item in values["pods"]),
+                      key=lambda item: (item.namespace, item.name)) if values["pods"] is not None else None
+        events = sorted((event_status(item) for item in values["events"]),
+                        key=lambda item: (item.observed_at is not None,
+                                          item.observed_at or datetime.min.replace(tzinfo=timezone.utc)),
+                        reverse=True) if values["events"] is not None else None
+
+        incomplete = {
+            "nodes": nodes is not None and any(not node.name or node.ready is None for node in nodes),
+            "pods": pods is not None and any(not pod.name or not pod.namespace or pod.restarts is None
+                                             or pod.health == "unknown" for pod in pods),
+            "events": events is not None and any(event.observed_at is None for event in events),
+        }
+        for name, missing in incomplete.items():
+            if missing:
+                message = f"{name}: some Kubernetes fields are unavailable"
+                if sources[name].status == "ok":
+                    sources[name] = SourceStatus(status="partial", message=message)
+                warnings.append(message)
+
+        summary = ClusterInventorySummary(
+            nodes=len(nodes) if nodes is not None else None,
+            nodes_ready=sum(node.ready is True for node in nodes) if nodes is not None else None,
+            nodes_not_ready=sum(node.ready is False for node in nodes) if nodes is not None else None,
+            pods=len(pods) if pods is not None else None,
+            pods_unhealthy=sum(pod.health == "unhealthy" for pod in pods) if pods is not None else None,
+            restarts=(sum(pod.restarts for pod in pods) if pods is not None
+                      and all(pod.restarts is not None for pod in pods) else None),
+            events=len(events) if events is not None else None,
+        )
+        if (nodes is not None and any(node.ready is False for node in nodes)) or (
+                pods is not None and any(pod.health == "unhealthy" for pod in pods)):
+            health = "degraded"
+        elif nodes is None or pods is None or not nodes or incomplete["nodes"] or incomplete["pods"] \
+                or sources["nodes"].status == "partial" or sources["pods"].status == "partial":
+            health = "unknown"
+        else:
+            health = "healthy"
+        data_status = ("unavailable" if all(source.status == "unavailable" for source in sources.values())
+                       else "partial" if any(source.status != "ok" for source in sources.values())
+                       else "complete")
+        return ClusterInventory(
+            observed_at=observed_at, health=health, data_status=data_status, summary=summary,
+            sources=sources, warnings=warnings, nodes=nodes, pods=pods, events=events,
         )

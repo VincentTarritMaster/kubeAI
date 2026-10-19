@@ -17,8 +17,9 @@ reste la référence d'architecture. Le circuit de collecte configuré est
 **Alloy → Mimir + Loki → FastAPI**, sans serveur Prometheus autonome dans le rendu
 Kustomize, sans traces ni Grafana à cette étape. Les protocoles Prometheus et
 les requêtes PromQL sont conservés. L'agent expose `/cluster/status` avec l'état des pods du
-namespace `kubeai` et leurs métriques CPU/mémoire. Son ServiceAccount ne peut que
-lister les pods de ce namespace. L'accès aux logs, l'analyse par LLM et la
+namespace `kubeai` et leurs métriques CPU/mémoire. `/cluster/inventory` lit
+les nœuds, les pods de tous les namespaces et les événements. Son ServiceAccount
+ne peut que lister ces trois ressources. L'accès aux logs, l'analyse par LLM et la
 connexion à Open WebUI restent implémentés : le chat appelle Mistral API par défaut
 après une collecte et une réduction des observations. Apertus, auto-hébergé sur
 macOS via llama.cpp et Metal, reste une option explicite apportée par Vincent.
@@ -43,7 +44,7 @@ n'a été effectué.
 - **Alloy** : découvre les pods et nœuds, collecte leurs logs vers Loki et les métriques vers Mimir.
 - **kube-state-metrics** : expose l'état et les redémarrages des pods et l'état des workloads.
 - **Modèle de langage** : Mistral Small 4 via API HTTPS par défaut. Apertus 8B Instruct quantifié reste une option locale explicite sur Mac.
-- **Kubernetes** : exécute les composants et fournit l'état des pods à l'agent via un Role de lecture ; l'accès aux nœuds et événements reste à ajouter.
+- **Kubernetes** : exécute les composants et fournit nœuds, pods et événements à l'agent via un ClusterRole limité à `list`.
 
 ## Flux général
 

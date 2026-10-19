@@ -12,8 +12,9 @@ des logs dans Loki et utilise Mistral API pour répondre aux questions. Apertus 
 | `app/api/` | Routes HTTP de l’agent |
 | `app/clients/prometheus_client.py` | Interroger Mimir via son API compatible Prometheus/PromQL |
 | `app/clients/loki_client.py` | Rechercher les logs dans Loki |
-| `app/clients/kubernetes_client.py` | Lister les pods avec le ServiceAccount et gérer la pagination |
-| `app/services/cluster_status.py` | Assembler l'état Kubernetes et les métriques récentes |
+| `app/clients/kubernetes_client.py` | Lister les nœuds, pods et événements avec pagination bornée |
+| `app/services/cluster_status.py` | Assembler l'état du namespace et l'inventaire du cluster |
+| `app/services/global_health.py` | Évaluer et présenter la santé globale avec des règles déterministes |
 | `app/services/diagnosis.py` | Produire le diagnostic |
 | `app/services/llm_service.py` | Appeler le modèle de langage |
 | `app/services/privacy.py` | Masquer les secrets et identifiants détectables |
@@ -21,6 +22,8 @@ des logs dans Loki et utilise Mistral API pour répondre aux questions. Apertus 
 | `tests/test_api.py` | Tests automatisés avec réponses Kubernetes/Mimir simulées |
 | `tests/test_chat.py` | Tests du chat, streaming, contexte réel et erreurs des sources |
 | `tests/test_mistral.py` | Tests HTTP simulés de Mistral, du SSE et des erreurs |
+| `tests/test_cluster_inventory.py` | Tests simulés des nœuds, pods, événements et permissions |
+| `tests/test_demo_cluster_health.py` | Tests simulés du parcours Open WebUI pour la démonstration A |
 | `tests/integration/test_live_cluster.py` | Tests explicites sur le vrai cluster |
 | `requirements.txt` | Dépendances Python |
 | `Dockerfile` | Construire l’image Docker |
@@ -37,10 +40,18 @@ Utilisateur → Open WebUI → FastAPI → Kubernetes/Mimir/Loki → Mistral API
 Open WebUI se connecte aux routes compatibles OpenAI de cet agent. À chaque tour,
 celui-ci prépare une observation Kubernetes/Mimir/Loki, masque les valeurs sensibles
 détectables et appelle Mistral API. Le modèle virtuel exposé est `kubeai` ;
-`kubeai-apertus` reste accepté pour les conversations historiques. Les événements
-restent à développer. Voir [la configuration Mistral](../docs/mistral-api.md) et
+`kubeai-apertus` reste accepté pour les conversations historiques. L'inventaire
+des nœuds, pods de tous les namespaces et événements est exposé séparément sur
+`/cluster/inventory`. Voir [la configuration Mistral](../docs/mistral-api.md) et
 [le profil Apertus facultatif](../llm/README.md). L'intégration Mimir doit
 encore être validée sur un cluster ; les tests simulés ne prouvent pas son ingestion.
+
+La question « Quel est l'état de santé de mon cluster ? » utilise cet inventaire
+dans le chat Open WebUI et dans `/diagnose`. Les faits et le niveau de santé sont
+calculés avant Mistral ; les métriques Mimir agrégées couvrent les conteneurs de
+pods de tous les namespaces. Le modèle ne peut ajouter qu'une priorité de lecture
+étayée ; sans clé ou en cas d'échec, le résumé déterministe reste disponible.
+Les règles et scénarios figurent dans [la démonstration A](../docs/demo-scenarios.md).
 
 ## Installation dans Minikube
 
@@ -84,15 +95,16 @@ kubectl --context minikube port-forward -n kubeai service/kubeai-agent 8000:8000
 Garder ce terminal ouvert. Consulter :
 
 - API : <http://127.0.0.1:8000/cluster/status>
+- Inventaire du cluster : <http://127.0.0.1:8000/cluster/inventory>
 - Documentation interactive : <http://127.0.0.1:8000/docs>
 - Contrat OpenAPI : <http://127.0.0.1:8000/openapi.json>
 - État du moteur : <http://127.0.0.1:8000/llm/status>
 - Modèles disponibles : <http://127.0.0.1:8000/v1/models>
 
-Le nom `/cluster/status` ne signifie pas un inventaire de tous les namespaces :
-la réponse expose explicitement `scope: namespace` et `namespace: kubeai`.
-Ce périmètre correspond à son Role Kubernetes. Les nœuds et événements ne sont
-pas encore interrogés.
+`/cluster/status` conserve `scope: namespace` et les métriques du namespace
+configuré. `/cluster/inventory` retourne `scope: cluster`, les nœuds, les pods
+de tous les namespaces et les événements datés, sans métriques Mimir.
+Les erreurs de chaque lecture et les limites de collecte sont explicites.
 
 Le contrat détaillé et les comportements en cas de panne figurent dans
 [`docs/api-contract.md`](../docs/api-contract.md).
@@ -126,12 +138,14 @@ La base Mimir contient `/prometheus` et le client ajoute `/api/v1/query`.
 Le nom Python `PrometheusClient` et les requêtes PromQL restent conservés.
 
 Le token est relu à chaque appel Kubernetes pour prendre en compte sa rotation.
-L'agent dispose uniquement du droit `list pods` dans `kubeai`, sans accès aux
-Secrets via l'API, aux logs via Kubernetes, au proxy kubelet ou aux autres namespaces.
-Les logs sont lus dans Loki, et la clé Mistral est montée comme fichier Secret. Changer de namespace
-nécessite aussi d'adapter le RoleBinding et le rôle dans le namespace cible.
+L'agent dispose uniquement du droit `list` sur `nodes`, `pods` et `events` à
+l'échelle du cluster. Il n'a aucun accès aux Secrets via l'API, aux logs via
+Kubernetes, au proxy kubelet, à `exec` ou aux verbes de modification.
+Les logs sont lus dans Loki et la clé Mistral est montée comme fichier Secret.
 Le Service reste interne au cluster, sans authentification applicative, pour
-ce profil local de développement.
+ce profil local de développement. Ne pas exposer la nouvelle route hors d'un
+environnement maîtrisé : les métadonnées et messages d'événements peuvent être
+sensibles malgré le masquage au mieux.
 
 ## Développement hors du cluster
 
@@ -175,7 +189,7 @@ Sous Windows, depuis la racine, avec l'environnement léger validé à l'étape 
 ```powershell
 Set-Location agent
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-..\.venv\Scripts\python.exe -B -m pytest tests/test_api.py tests/test_chat.py tests/test_mimir.py tests/test_mistral.py -v -p no:cacheprovider
+..\.venv\Scripts\python.exe -B -m pytest tests --ignore=tests/integration -v -p no:cacheprovider
 ```
 
 Ces fichiers utilisent des réponses HTTP simulées et bloquent les sorties HTTP
@@ -191,6 +205,10 @@ Depuis `agent/` :
 Les tests couvrent le contrat HTTP/OpenAPI, les métriques absentes, les erreurs
 des dépendances, la pagination, la rotation du token, les pods terminés et en
 CrashLoopBackOff, ainsi que l'exclusion des métriques d'anciens pods/conteneurs.
+Les tests de l'inventaire couvrent Ready/NotReady, tous les namespaces, les
+événements ordonnés, les redémarrages, les limites, les 403 et les timeouts.
+Les tests de la démonstration A couvrent le parcours JSON/SSE, le bilan global,
+les mesures Mimir et le repli sans Mistral.
 
 Tests supplémentaires sur le cluster réel, depuis la racine du dépôt :
 
