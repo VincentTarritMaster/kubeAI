@@ -13,21 +13,21 @@ class LLMService:
 
     @property
     def provider_name(self):
-        return "Mistral" if self.settings.llm_provider == "mistral" else "Apertus"
+        return "Mistral API" if self.settings.llm_provider == "mistral-api" else "Apertus local"
 
     def headers(self):
         try:
             key = self.settings.llm_key()
         except (OSError, UnicodeError) as error:
             raise UpstreamError("llm", f"Clé {self.provider_name} introuvable ou illisible ; configurez le fournisseur") from error
-        if self.settings.llm_provider == "mistral" and not key:
+        if self.settings.llm_provider == "mistral-api" and not key:
             raise UpstreamError("llm", "Clé Mistral manquante ; configurez MISTRAL_API_KEY ou MISTRAL_API_KEY_FILE")
         if key and (not key.isascii() or "\r" in key or "\n" in key):
             raise UpstreamError("llm", f"Format de clé {self.provider_name} invalide")
         return {"Authorization": "Bearer " + key} if key else {}
 
     def check_url(self, request):
-        if self.settings.llm_provider == "mistral" and (
+        if self.settings.llm_provider == "mistral-api" and (
                 request.url.scheme != "https" or request.url.username or request.url.password):
             raise UpstreamError("llm", "La connexion Mistral exige HTTPS sans identifiants dans l’URL")
 
@@ -89,7 +89,7 @@ class LLMService:
                 raise UpstreamError("llm", f"Le modèle {self.provider_name} configuré n’est pas disponible")
             return {"status": "ready", "provider": self.settings.llm_provider,
                     "model": self.settings.llm_model,
-                    "hosting": "api" if self.settings.llm_provider == "mistral" else "self-hosted"}
+                    "hosting": "api" if self.settings.llm_provider == "mistral-api" else "configured_endpoint"}
         except httpx.TimeoutException as error:
             raise UpstreamError("llm", f"Délai du contrôle de statut {self.provider_name} dépassé") from error
         except httpx.RequestError as error:

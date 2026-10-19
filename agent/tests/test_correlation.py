@@ -263,7 +263,7 @@ def test_mistral_can_only_prioritize_a_supported_hypothesis():
     api, calls = make_client(key="test-key")
     with api:
         text = answer(ask(api))
-    assert "Mistral a sélectionné la priorité demo_cpu_activity" in text
+    assert "Mistral API a sélectionné la priorité demo_cpu_activity" in text
     assert len(calls["llm"]) == 1
 
 

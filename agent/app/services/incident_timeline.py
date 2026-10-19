@@ -200,7 +200,8 @@ async def investigate(service, chat):
     if error:
         return error, {"scope": "incident", "status": "clarification_required", "message": error}
     report, _, _, _ = await collect(service, window)
-    ai_note = "Mistral indisponible ; chronologie déterministe conservée."
+    provider_name = service.llm.provider_name
+    ai_note = f"{provider_name} indisponible ; chronologie déterministe conservée."
     if service.sensitive_values() and report["timeline"]:
         try:
             # La sélection de priorité ne requiert ni le contenu des logs ni les messages des événements.
@@ -214,9 +215,9 @@ async def investigate(service, chat):
             focus = json.loads(answer["choices"][0]["message"]["content"])["focus"]
             names = {"kubernetes_events": "Kubernetes", "mimir": "Mimir", "loki": "Loki"}
             if focus in names and any(e["source"] == names[focus] for e in report["timeline"]):
-                ai_note = f"Mistral suggère de vérifier d'abord {names[focus]} ; aucune cause n'en est déduite."
+                ai_note = f"{provider_name} suggère de vérifier d'abord {names[focus]} ; aucune cause n'en est déduite."
             elif focus != "none":
-                ai_note = "Suggestion Mistral non étayée écartée ; chronologie déterministe conservée."
+                ai_note = f"Suggestion {provider_name} non étayée écartée ; chronologie déterministe conservée."
         except (UpstreamError, KeyError, IndexError, TypeError, ValueError):
             pass
     return render(report, ai_note), report

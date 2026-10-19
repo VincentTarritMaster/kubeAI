@@ -126,13 +126,13 @@ sur Minikube. `.env.example` documente les variables mais n'est pas chargé.
 | `UPSTREAM_TIMEOUT_SECONDS` | `5` |
 | `METRICS_MAX_AGE_SECONDS` | `60` |
 | `LOKI_URL` | `http://loki.monitoring.svc.cluster.local:3100` |
-| `LLM_PROVIDER` | `mistral` (`apertus` explicite possible) |
+| `LLM_PROVIDER` | `mistral-api` par défaut ou `local` (alias `mistral` et `apertus` admis) |
 | `MISTRAL_BASE_URL` | `https://api.mistral.ai/v1` ; HTTPS obligatoire |
 | `MISTRAL_MODEL` | `mistral-small-2603` |
 | `MISTRAL_API_KEY` | Clé en environnement, vide par défaut |
 | `MISTRAL_API_KEY_FILE` | `/var/run/secrets/kubeai-mistral/api-key` |
 | `LLM_TIMEOUT_SECONDS` | `60` pour Mistral, `180` pour Apertus |
-| `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY_FILE` | Profil Apertus uniquement |
+| `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY_FILE` | Profil `local`; clé facultative selon le serveur |
 
 La base Mimir contient `/prometheus` et le client ajoute `/api/v1/query`.
 Le nom Python `PrometheusClient` et les requêtes PromQL restent conservés.
@@ -177,7 +177,10 @@ Pour tester le chat hors du cluster, lancer aussi un tunnel vers Loki et configu
 `LOKI_URL=http://127.0.0.1:3100` ainsi que `MISTRAL_API_KEY` dans l'environnement
 privé ou `MISTRAL_API_KEY_FILE` avec un fichier hors du dépôt. Aucun appel réel
 n'est nécessaire pour les tests unitaires. Les anciennes variables `LLM_*` de
-connexion locale ne sont lues que si `LLM_PROVIDER=apertus`.
+connexion locale ne sont lues que si `LLM_PROVIDER=local` (l'alias `apertus`
+reste accepté). Le backend ne télécharge pas de modèle et ne charge pas `.env`
+automatiquement. Les profils et les commandes Windows/Mac figurent dans
+[`docs/architecture-llm-profiles.md`](../docs/architecture-llm-profiles.md).
 
 Le proxy utilise alors les droits de l'utilisateur kubectl ; les droits du
 ServiceAccount sont utilisés uniquement dans le déploiement Kubernetes.

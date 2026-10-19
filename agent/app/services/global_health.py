@@ -173,7 +173,7 @@ def model_focus(report: dict, content: str) -> str | None:
     return focus if isinstance(focus, str) and available.get(focus, False) else None
 
 
-def focus_note(focus: str) -> str:
+def focus_note(focus: str, provider_name: str = "Mistral API") -> str:
     descriptions = {
         "nodes": "vérifier d'abord les nœuds NotReady",
         "pods": "examiner d'abord les pods en erreur",
@@ -182,4 +182,4 @@ def focus_note(focus: str) -> str:
         "availability": "rétablir d'abord les lectures Kubernetes manquantes",
         "none": "aucun axe supplémentaire n'est retenu par ce relevé",
     }
-    return "**Priorité de lecture sélectionnée avec Mistral :** " + descriptions[focus] + "."
+    return f"**Priorité de lecture sélectionnée avec {provider_name} :** " + descriptions[focus] + "."

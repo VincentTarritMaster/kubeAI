@@ -83,7 +83,7 @@ def test_config_defaults_and_secret_is_not_in_repr(monkeypatch):
     for name in ("LLM_PROVIDER", "MISTRAL_API_KEY", "MISTRAL_MODEL", "MISTRAL_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     settings = Settings.from_env()
-    assert settings.llm_provider == "mistral"
+    assert settings.llm_provider == "mistral-api"
     assert settings.llm_base_url == "https://api.mistral.ai/v1"
     assert settings.llm_model == "mistral-small-2603"
     assert "MISTRAL_API_KEY" not in repr(settings)
@@ -91,6 +91,37 @@ def test_config_defaults_and_secret_is_not_in_repr(monkeypatch):
     assert "unit-secret-123456" not in repr(Settings.from_env())
     with pytest.raises(ValueError, match="HTTPS"):
         Settings(llm_base_url="http://api.mistral.ai/v1")
+
+
+@pytest.mark.parametrize("configured,expected", [
+    ("mistral-api", "mistral-api"), ("mistral", "mistral-api"),
+    ("local", "local"), ("apertus", "local"),
+])
+def test_provider_profiles_and_legacy_aliases(monkeypatch, configured, expected):
+    monkeypatch.setenv("LLM_PROVIDER", configured)
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    settings = Settings.from_env()
+    assert settings.llm_provider == expected
+    if expected == "local":
+        assert settings.llm_base_url == "http://127.0.0.1:11435/v1"
+        assert settings.llm_model == "apertus-8b"
+        assert settings.llm_api_key_file == ""
+        assert settings.llm_api_key == ""
+    else:
+        assert settings.llm_base_url == "https://api.mistral.ai/v1"
+
+
+def test_invalid_provider_is_explicit():
+    with pytest.raises(ValueError, match="mistral-api ou local"):
+        Settings(llm_provider="unknown")
+
+
+def test_selecting_local_directly_does_not_inherit_mistral_defaults():
+    settings = Settings(llm_provider="local")
+    assert settings.llm_base_url == "http://127.0.0.1:11435/v1"
+    assert settings.llm_model == "apertus-8b"
+    assert settings.llm_api_key_file == ""
+    assert settings.llm_timeout == 180
 
 
 def test_secret_file_fallback_and_environment_priority(tmp_path):
@@ -132,9 +163,74 @@ def test_provider_status_uses_mocked_models_endpoint():
     with client:
         result = client.get("/llm/status")
     assert result.status_code == 200
-    assert result.json()["provider"] == "mistral"
+    assert result.json()["provider"] == "mistral-api"
     assert result.json()["model"] == "mistral-small-2603"
     assert len(calls) == 1
+
+
+def test_local_profile_keeps_same_openwebui_model_and_needs_no_mistral_key():
+    calls = []
+
+    def local_handler(request):
+        calls.append(request)
+        assert request.url.host == "127.0.0.1"
+        assert "authorization" not in request.headers
+        if request.method == "GET":
+            assert request.url.path == "/v1/models"
+            return httpx.Response(200, json={"data": [{"id": "apertus-8b"}]})
+        assert request.url.path == "/v1/chat/completions"
+        payload = json.loads(request.content)
+        assert payload["model"] == "apertus-8b"
+        return sse_response(["Apertus local répond\n"]) if payload.get("stream") else completion_response()
+
+    settings = Settings(ca_file="", token_file="", llm_provider="local", llm_base_url="http://127.0.0.1:11435/v1",
+                        llm_model="apertus-8b", llm_api_key_file="")
+    client = TestClient(create_app(settings,
+                                   kubernetes_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"items": [pod()]})),
+                                   prometheus_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+                                   loki_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+                                   llm_transport=httpx.MockTransport(local_handler)))
+    with client:
+        listed = client.get("/v1/models").json()["data"]
+        assert {item["id"] for item in listed} == {"kubeai", "kubeai-apertus"}
+        assert listed[0]["name"] == "kubeAI · Apertus local"
+        ready = client.get("/llm/status")
+        assert ready.status_code == 200
+        assert ready.json()["provider"] == "local"
+        assert ready.json()["hosting"] == "configured_endpoint"
+        response = client.post("/v1/chat/completions", json=chat_body())
+        assert response.status_code == 200
+        assert response.json()["model"] == "kubeai"
+        streamed = client.post("/v1/chat/completions", json=chat_body(stream=True))
+        assert streamed.status_code == 200
+        assert "data: [DONE]" in streamed.text
+        streamed_chunks = events(streamed)
+        assert all(item == "[DONE]" or item["model"] == "kubeai" for item in streamed_chunks)
+    assert len(calls) == 3
+
+
+def test_local_profile_failure_is_explicit_and_does_not_expose_upstream_details():
+    def local_failure(request):
+        if request.method == "GET":
+            return httpx.Response(429, json={"detail": "private-upstream-token"})
+        raise httpx.ConnectError("private host address", request=request)
+
+    settings = Settings(ca_file="", token_file="", llm_provider="local",
+                        llm_base_url="http://127.0.0.1:11435/v1", llm_model="apertus-8b",
+                        llm_api_key_file="")
+    client = TestClient(create_app(settings,
+                                   kubernetes_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"items": [pod()]})),
+                                   prometheus_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+                                   loki_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+                                   llm_transport=httpx.MockTransport(local_failure)))
+    with client:
+        status = client.get("/llm/status")
+        assert status.status_code == 503
+        assert "Quota ou limite de requêtes Apertus local" in status.json()["detail"]["message"]
+        response = client.post("/v1/chat/completions", json=chat_body())
+        assert response.status_code == 503
+        assert "Connexion au service Apertus local impossible" in response.json()["detail"]["message"]
+        assert "private-upstream-token" not in response.text
 
 
 def test_legacy_virtual_model_alias_uses_current_provider():

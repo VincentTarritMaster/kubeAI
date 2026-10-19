@@ -60,10 +60,11 @@ le relevé. Sans clé ou si le fournisseur échoue, une réponse française avec
 faits, preuves, limites et vérifications en lecture seule reste disponible.
 Voir [les règles de la démonstration A](demo-scenarios.md).
 
-Mistral est joint en HTTPS via `MISTRAL_BASE_URL` ; le modèle est
+Le profil par défaut `mistral-api` est joint en HTTPS via `MISTRAL_BASE_URL` ; le modèle est
 `MISTRAL_MODEL`. La clé vient de `MISTRAL_API_KEY` ou du Secret monté dans
 `MISTRAL_API_KEY_FILE`. Le timeout de génération est de 60 secondes par défaut.
-Le profil Apertus conserve ses variables `LLM_*` si `LLM_PROVIDER=apertus`.
+Le profil `local` utilise `LLM_BASE_URL`, `LLM_MODEL` et accepte une clé locale
+facultative. Les anciens noms `mistral` et `apertus` sont acceptés comme alias.
 La route `/v1/models` publie les identifiants virtuels même sans clé ;
 `/llm/status` contacte réellement le fournisseur configuré.
 

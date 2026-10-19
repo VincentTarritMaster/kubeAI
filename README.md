@@ -63,7 +63,11 @@ Prérequis : Docker Desktop, Minikube et kubectl. Depuis la racine du dépôt, d
     kubectl config current-context
     kubectl get nodes
 
-Le fournisseur de chat configuré est Mistral API. La création d'un Secret
+Le profil de chat par défaut est `mistral-api`. Le profil `local` réutilise le
+même backend et le même modèle virtuel `kubeai` avec un endpoint OpenAI-compatible.
+La configuration PowerShell et le basculement Kubernetes sont décrits dans
+[l'architecture des profils LLM](docs/architecture-llm-profiles.md).
+La création d'un Secret
 `kubeai-mistral` et la décision du groupe sur les données envoyées sont décrites
 dans [la configuration Mistral](docs/mistral-api.md). Aucun moteur local ni poids
 de modèle ne sont requis pour les tests du backend sur Windows. Sur une machine

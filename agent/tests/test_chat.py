@@ -239,13 +239,13 @@ class ChatTests(unittest.TestCase):
         with self.client(key_file="/nonexistent-kubeai-key") as client:
             response = client.post("/v1/chat/completions", json=self.body())
             self.assertEqual(response.status_code, 503)
-            self.assertIn("Clé Apertus introuvable", response.json()["detail"]["message"])
+            self.assertIn("Clé Apertus local introuvable", response.json()["detail"]["message"])
             self.assertEqual(client.get("/cluster/status").status_code, 200)
 
     def test_model_discovery_and_local_model_health(self):
         with self.client() as client:
             self.assertEqual(client.get("/v1/models").json()["data"][0]["id"], "kubeai")
-            self.assertEqual(client.get("/llm/status").json()["hosting"], "self-hosted")
+            self.assertEqual(client.get("/llm/status").json()["hosting"], "configured_endpoint")
 
     def test_unknown_model_is_rejected(self):
         with self.client() as client:

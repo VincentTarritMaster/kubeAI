@@ -18,7 +18,7 @@ autorisation d'utiliser une vraie clé.
 
 | Variable | Valeur de référence | Usage |
 |---|---|---|
-| `LLM_PROVIDER` | `mistral` | Sélection du fournisseur ; `apertus` est facultatif |
+| `LLM_PROVIDER` | `mistral-api` | Sélection du profil ; `local` sélectionne l'endpoint compatible OpenAI |
 | `MISTRAL_BASE_URL` | `https://api.mistral.ai/v1` | Base HTTPS, sans identifiants dans l'URL |
 | `MISTRAL_MODEL` | `mistral-small-2603` | Modèle demandé à l'API |
 | `MISTRAL_API_KEY` | vide | Clé reçue par environnement privé, prioritaire sur le fichier |
@@ -99,8 +99,9 @@ du périmètre de cette étape.
 
 ## Profil Apertus facultatif
 
-Le code local de Vincent reste disponible avec `LLM_PROVIDER=apertus`. Dans ce
-profil, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY_FILE` et
-`LLM_TIMEOUT_SECONDS` sont lus comme auparavant. `start.sh` ne télécharge ni
+Le code local de Vincent reste disponible avec `LLM_PROVIDER=local` (l'ancien
+alias `apertus` est encore accepté). Dans ce profil, `LLM_BASE_URL`, `LLM_MODEL`,
+`LLM_API_KEY_FILE` et `LLM_TIMEOUT_SECONDS` configurent un endpoint compatible
+OpenAI. `start.sh` ne télécharge ni
 ne démarre le moteur. Les commandes manuelles figurent dans
 [le profil Apertus](../llm/README.md).

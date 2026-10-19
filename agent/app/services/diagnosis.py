@@ -62,7 +62,7 @@ class DiagnosisService:
                 })
                 focus = model_focus(report, response["choices"][0]["message"]["content"])
                 if focus:
-                    ai_note = focus_note(focus)
+                    ai_note = focus_note(focus, self.llm.provider_name)
                 else:
                     ai_note = "**Analyse IA avancée :** proposition non étayée écartée ; le bilan reste déterministe."
             except (UpstreamError, KeyError, IndexError, TypeError, ValueError):

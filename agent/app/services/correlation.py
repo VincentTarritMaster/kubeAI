@@ -186,7 +186,8 @@ async def correlate(service, chat):
         return message, {"scope": "correlation", "status": "clarification_required", "message": message}
     report, _, metrics, _ = await collect(service, window, include_correlation=True)
     report = assess(report, metrics)
-    model_note = "Mistral indisponible ; explication déterministe conservée."
+    provider_name = service.llm.provider_name
+    model_note = f"{provider_name} indisponible ; explication déterministe conservée."
     if service.sensitive_values() and report["hypotheses"]:
         try:
             candidates = [{"id": h["id"], "description": h["description"],
@@ -199,9 +200,9 @@ async def correlate(service, chat):
             priority = json.loads(response["choices"][0]["message"]["content"])["priority"]
             if priority in {h["id"] for h in report["hypotheses"]}:
                 report["hypotheses"].sort(key=lambda h: h["id"] != priority)
-                model_note = f"Mistral a sélectionné la priorité {priority} parmi les hypothèses calculées ; aucun fait supplémentaire n'a été retenu."
+                model_note = f"{provider_name} a sélectionné la priorité {priority} parmi les hypothèses calculées ; aucun fait supplémentaire n'a été retenu."
             elif priority != "none":
-                model_note = "Suggestion Mistral non étayée écartée."
+                model_note = f"Suggestion {provider_name} non étayée écartée."
         except (UpstreamError, KeyError, IndexError, TypeError, ValueError):
             pass
     return render(report, model_note), report

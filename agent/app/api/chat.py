@@ -23,7 +23,7 @@ LEGACY_MODEL = "kubeai-apertus"
 @router.get("/v1/models", tags=["chat"], operation_id="list_chat_models")
 async def models(request: Request):
     provider = request.app.state.diagnosis.llm.settings.llm_provider
-    name = "kubeAI · Mistral API" if provider == "mistral" else "kubeAI · Apertus local"
+    name = "kubeAI · Mistral API" if provider == "mistral-api" else "kubeAI · Apertus local"
     return {"object": "list", "data": [
         {"id": CHAT_MODEL, "object": "model", "created": 0, "owned_by": "kubeai", "name": name},
         {"id": LEGACY_MODEL, "object": "model", "created": 0, "owned_by": "kubeai",

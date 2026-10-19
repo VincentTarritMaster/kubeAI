@@ -56,14 +56,19 @@ endpoint de réception et son API LogQL.
 
 Open WebUI transmet la conversation à `/v1/chat/completions` de l'agent. Celui-ci
 lit les pods, leurs métriques et un extrait de logs, prépare un contexte borné,
-puis appelle Mistral API. La réponse est retransmise en streaming avec le périmètre
-et les sources. Aucune commande de remédiation n'est exécutée.
+puis appelle le profil LLM sélectionné (`mistral-api` par défaut ou `local`). La
+réponse est retransmise en streaming avec le périmètre et les sources. Aucune
+commande de remédiation n'est exécutée. Les deux profils gardent le même agent,
+les mêmes routes et le modèle virtuel `kubeai` d'Open WebUI.
 
 Les données Open WebUI sont stockées sur un PVC de 1 Gio. La clé Mistral est
 fournie par Secret Kubernetes ou environnement privé, jamais par ConfigMap.
-Les observations nécessaires quittent le cluster pour le fournisseur externe.
-La région d'inférence et l'utilisation de données sensibles restent à valider
-avec le groupe. Voir [la configuration Mistral](mistral-api.md).
+Avec le profil Mistral API, les observations nécessaires quittent le cluster
+vers le fournisseur externe. Avec le profil local, elles vont à l'endpoint
+`LLM_BASE_URL`, dont l'emplacement et les journaux doivent être vérifiés. La
+région d'inférence et l'utilisation de données sensibles restent à valider avec
+le groupe. Voir [la configuration Mistral](mistral-api.md) et
+[les deux profils LLM](architecture-llm-profiles.md).
 
 Les anciens manifests et le PVC Prometheus sont conservés hors du déploiement
 actif. Réappliquer Kustomize ne retire pas les anciennes ressources du cluster.

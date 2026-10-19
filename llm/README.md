@@ -1,8 +1,10 @@
-# kubeAI — profil Apertus facultatif
+# kubeAI — profil LLM local facultatif
 
-Mistral API est le fournisseur principal du projet. Ce profil local conserve
-le travail de Vincent et demande une activation explicite avec
-`LLM_PROVIDER=apertus`. Il n'est pas utilisé par les tests Windows.
+Le même backend FastAPI sert les deux profils : `mistral-api` par défaut et
+`local` pour tout serveur compatible avec l'API OpenAI. L'ancien nom
+`LLM_PROVIDER=apertus` reste accepté. Open WebUI garde son endpoint vers l'agent
+et le même identifiant virtuel `kubeai` dans les deux cas. Ce profil local
+conserve le travail de Vincent.
 
 Le profil local utilise **Apertus 8B Instruct 2509, Q4_K_M**, exécuté par
 **llama.cpp b11669** directement sur macOS Apple Silicon avec Metal.
@@ -49,7 +51,7 @@ trouvent séparément dans `.cache/webui-backups/`.
 
 ## Préparation explicite du profil local
 
-Prérequis : macOS Apple Silicon, environ 6 Gio de disque libres, Docker Desktop,
+Prérequis pour le profil Apertus existant : macOS Apple Silicon, environ 6 Gio de disque libres, Docker Desktop,
 Minikube, kubectl, Python 3 et curl. L'agent dans l'image utilise Python 3.13.
 Depuis la racine du dépôt :
 
@@ -64,10 +66,12 @@ téléchargent/vérifient les poids, démarrent le moteur et transfèrent la cl�
 locale vers le Secret Kubernetes `kubeai-llm`. La première commande télécharge
 environ 5 Go. `start.sh` ne les exécute jamais automatiquement. Pour sélectionner
 ce profil dans le backend, renseigner explicitement dans sa configuration
-`LLM_PROVIDER=apertus`, `LLM_BASE_URL=http://host.minikube.internal:11435/v1`,
+`LLM_PROVIDER=local`, `LLM_BASE_URL=http://host.minikube.internal:11435/v1`,
 `LLM_MODEL=apertus-8b`, `LLM_API_KEY_FILE=/var/run/secrets/kubeai-llm/api-key`
-et `LLM_TIMEOUT_SECONDS=180`. Dans Kubernetes, adapter le ConfigMap et
-redémarrer le Deployment avant d'essayer le chat.
+et `LLM_TIMEOUT_SECONDS=180`. Le serveur local existant requiert une clé dans
+ce profil ; le fichier Secret reste facultatif pour les endpoints locaux sans
+authentification. Dans Kubernetes, adapter le ConfigMap et redémarrer le
+Deployment avant d'essayer le chat.
 
 Pour déployer après cette préparation explicite :
 
