@@ -4,12 +4,14 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import re
+import unicodedata
 
 from app.clients.base import UpstreamError
 from app.services.privacy import redact_data, redact_text
 
-HELP = ("Précisez une fenêtre avec fuseau : début=2026-10-19T14:00:00+02:00 "
-        "fin=2026-10-19T14:30:00+02:00 namespace=kubeai pod=kubeai-demo-failure. "
+HELP = ("Précisez une fenêtre complète avec fuseau, par exemple début=<ISO-8601> fin=<ISO-8601>, "
+        "ou une date explicite telle que « le 19 octobre 2026 entre 18:25 et 18:33 UTC ». "
+        "Ajoutez namespace=<namespace> et pod=<pod> (ou « pod <nom> dans le namespace <nom> »). "
         "Une heure isolée ou « ce matin » reste ambiguë.")
 
 
@@ -21,32 +23,116 @@ def incident_question(chat):
 
 
 def _arg(question, name):
-    found = re.search(r"(?<![\w-])" + name + r"=([^\s,;]+)", question, re.IGNORECASE)
-    return found.group(1) if found else None
+    found = re.search(r"(?<![\w-])" + name + r"\s*=\s*([^\s,;]+)", question, re.IGNORECASE)
+    return found.group(1).rstrip(".?!)»\"'") if found else None
 
 
-def parse_window(question):
+def _plain(value):
+    return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
+
+
+_MONTHS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
+           "juillet": 7, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11,
+           "decembre": 12}
+
+
+def _clock(value):
+    match = re.fullmatch(r"(\d{1,2})(?::|h)(\d{2})", value, re.IGNORECASE)
+    if not match:
+        return None
+    hour, minute = map(int, match.groups())
+    if hour > 23 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _components(question):
+    """Extract only user-provided incident parameters; no example defaults."""
     first = _arg(question, "début") or _arg(question, "debut")
     last = _arg(question, "fin")
-    namespace, pod = _arg(question, "namespace"), _arg(question, "pod")
-    if not first or not last:
-        return None, HELP
-    try:
-        start, end = (datetime.fromisoformat(s.replace("Z", "+00:00")) for s in (first, last))
-    except ValueError:
+    start = end = None
+    tz_label = None
+    if first and last:
+        try:
+            start = datetime.fromisoformat(first.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            tz_label = first[-6:] if re.search(r"[+-]\d{2}:?\d{2}$", first) else "UTC"
+        except ValueError:
+            start = end = None
+    if start is None or end is None:
+        plain = _plain(question)
+        date = re.search(r"(?:\ble\s+|\bdu\s+)?(\d{1,2})\s+([a-z]+)\s+(\d{4})", plain)
+        if not date:
+            date = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", plain)
+            if date:
+                day, month, year = map(int, date.groups())
+            else:
+                day = month = year = None
+        else:
+            day, month, year = int(date.group(1)), _MONTHS.get(date.group(2)), int(date.group(3))
+        times = re.search(r"\b(?:entre\s+|de\s+)(\d{1,2}(?::|h)\d{2})\s+(?:et|a)\s+(\d{1,2}(?::|h)\d{2})\b", plain)
+        has_zone = bool(re.search(r"\b(?:utc|gmt)\b|(?<!\w)z\b", plain))
+        if day and month and year and times and has_zone:
+            first_time, last_time = (_clock(times.group(i)) for i in (1, 2))
+            if first_time and last_time:
+                try:
+                    start = datetime(year, month, day, *first_time, tzinfo=timezone.utc)
+                    end = datetime(year, month, day, *last_time, tzinfo=timezone.utc)
+                    tz_label = "UTC"
+                except ValueError:
+                    start = end = None
+    namespace = _arg(question, "namespace")
+    pod = _arg(question, "pod")
+    plain = _plain(question)
+    if not namespace:
+        match = re.search(r"\bnamespace\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
+        namespace = match.group(1) if match else None
+    if not pod:
+        match = re.search(r"\bpod\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
+        pod = match.group(1) if match else None
+    return {"start": start, "end": end, "timezone": tz_label, "namespace": namespace, "pod": pod}
+
+
+def _validate_components(parts):
+    start, end = parts["start"], parts["end"]
+    if start is None or end is None:
         return None, HELP
     if start.tzinfo is None or end.tzinfo is None or start.utcoffset() is None or end.utcoffset() is None:
         return None, HELP
     start, end = start.astimezone(timezone.utc), end.astimezone(timezone.utc)
     if not start < end or (end - start).total_seconds() > 21600:
         return None, "Intervalle positif de six heures maximum requis. " + HELP
+    namespace, pod = parts["namespace"], parts["pod"]
     valid = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
     if namespace and (len(namespace) > 63 or not re.fullmatch(valid, namespace)):
         return None, "Namespace invalide. " + HELP
     if pod and (not namespace or len(pod) > 253 or not re.fullmatch(valid, pod)):
         return None, "Précisez le namespace et un pod valide. " + HELP
-    return {"start": start, "end": end, "timezone": first[-6:] if first[-6] in "+-" else "UTC",
+    return {"start": start, "end": end, "timezone": parts["timezone"] or "UTC",
             "namespace": namespace, "pod": pod}, None
+
+
+def parse_window(question):
+    return _validate_components(_components(question))
+
+
+def parse_chat_window(chat):
+    """Resolve a current request, inheriting only explicit same-incident context."""
+    users = [message.content for message in chat.messages if message.role == "user"]
+    current = users[-1] if users else ""
+    parts = _components(current)
+    normalized = _plain(current)
+    if "meme incident" in normalized or "same incident" in normalized:
+        missing = [key for key in ("start", "end", "namespace", "pod") if not parts.get(key)]
+        for previous in reversed(users[:-1]):
+            old = _components(previous)
+            for key in missing:
+                if old.get(key):
+                    parts[key] = old[key]
+            missing = [key for key in missing if not parts.get(key)]
+            if not missing:
+                break
+    return _validate_components(parts)
 
 
 def stamp(value):
@@ -196,8 +282,7 @@ async def collect(service, window, *, include_correlation=False):
 
 
 async def investigate(service, chat):
-    question = next(m.content for m in reversed(chat.messages) if m.role == "user")
-    window, error = parse_window(question)
+    window, error = parse_chat_window(chat)
     if error:
         return error, {"scope": "incident", "status": "clarification_required", "message": error}
     # Include bounded KSM and application-process CPU history when available so

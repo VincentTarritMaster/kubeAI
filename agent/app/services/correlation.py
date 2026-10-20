@@ -6,7 +6,7 @@ import re
 import unicodedata
 
 from app.clients.base import UpstreamError
-from app.services.incident_timeline import HELP, collect, parse_window, stamp
+from app.services.incident_timeline import HELP, collect, parse_chat_window, stamp
 
 ALIGN_SECONDS = 300
 
@@ -221,8 +221,7 @@ def render(report, model_note):
 
 
 async def correlate(service, chat):
-    question = next(m.content for m in reversed(chat.messages) if m.role == "user")
-    window, error = parse_window(question)
+    window, error = parse_chat_window(chat)
     if error or not window["namespace"] or not window["pod"]:
         message = error or ("Précisez namespace et pod pour comparer des preuves de la même ressource. " + HELP)
         return message, {"scope": "correlation", "status": "clarification_required", "message": message}

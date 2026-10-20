@@ -12,12 +12,19 @@ from app.clients.loki_client import LokiClient
 from app.clients.prometheus_client import PrometheusClient
 from app.config import Settings
 from app.main import create_app
-from app.services.incident_timeline import parse_window
+from app.services.incident_timeline import HELP, parse_chat_window, parse_window
 
 START = "2026-10-19T14:00:00+02:00"
 END = "2026-10-19T14:30:00+02:00"
 QUESTION = f"Que s'est-il passé lors de l'incident début={START} fin={END} namespace=kubeai pod=kubeai-demo-failure ?"
 FIRST = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc).timestamp()
+FRENCH_START = datetime(2026, 10, 19, 18, 25, tzinfo=timezone.utc).timestamp()
+FRENCH_END = datetime(2026, 10, 19, 18, 33, tzinfo=timezone.utc).timestamp()
+QUESTION_B_FR = ("Analyse l'incident du pod kubeai-demo-incident dans le namespace kubeai, "
+                 "le 19 octobre 2026 entre 18:25 et 18:33 UTC. Reconstitue la chronologie "
+                 "à partir des logs et des métriques réellement disponibles.")
+QUESTION_C_FR = ("Corrèle les logs et les métriques CPU de l'incident du pod kubeai-demo-incident "
+                 "dans le namespace kubeai, le 19 octobre 2026 entre 18:25 et 18:33 UTC.")
 
 
 def event(name, second, *, namespace="kubeai", pod="kubeai-demo-failure", reason="Failed",
@@ -39,7 +46,8 @@ def pod(name="kubeai-demo-failure", namespace="kubeai"):
 def client(*, events=None, pods=None, key="", kube_code=200, mimir_code=200, loki_code=200,
            mimir_empty=False, loki_empty=False, llm_code=200, llm_text='{"focus":"loki"}',
            timeout_source=None, mimir_series=1, loki_lines=1, outside_log=False,
-           mimir_memory_code=200):
+           mimir_memory_code=200, expected_start=FIRST, expected_end=FIRST + 1800,
+           expected_namespace="kubeai", expected_pod="kubeai-demo-failure"):
     calls = {"kubernetes": [], "mimir": [], "loki": [], "llm": []}
     events = [event("late", 180), event("early", 10)] if events is None else events
     pods = [pod()] if pods is None else pods
@@ -59,27 +67,27 @@ def client(*, events=None, pods=None, key="", kube_code=200, mimir_code=200, lok
         if timeout_source == "mimir":
             raise httpx.ReadTimeout("simulated")
         assert request.url.path == "/prometheus/api/v1/query_range"
-        assert float(request.url.params["start"]) == FIRST
-        assert float(request.url.params["end"]) == FIRST + 1800
+        assert float(request.url.params["start"]) == expected_start
+        assert float(request.url.params["end"]) == expected_end
         assert 30 <= int(request.url.params["step"]) <= 300
-        assert 'namespace="kubeai"' in request.url.params["query"]
-        assert 'pod="kubeai-demo-failure"' in request.url.params["query"]
+        assert f'namespace="{expected_namespace}"' in request.url.params["query"]
+        assert f'pod="{expected_pod}"' in request.url.params["query"]
         if mimir_code != 200:
             return httpx.Response(mimir_code)
         if mimir_memory_code != 200 and "rate(" not in request.url.params["query"]:
             return httpx.Response(mimir_memory_code)
         query = request.url.params["query"]
         if "process_cpu_seconds_total" in query:
-            values = [[FIRST + 60, "0.08"]]
+            values = [[expected_start + 60, "0.08"]]
         elif "kube_pod_container_status_restarts_total" in query:
-            values = [[FIRST + 60, "1"]]
+            values = [[expected_start + 60, "1"]]
         elif 'resource="cpu"' in query:
-            values = [[FIRST + 60, "0.1"]]
+            values = [[expected_start + 60, "0.1"]]
         elif 'resource="memory"' in query:
-            values = [[FIRST + 60, "67108864"]]
+            values = [[expected_start + 60, "67108864"]]
         else:
-            values = [[FIRST + 60, "0.25" if "rate(" in query else "10485760"]]
-        rows = [] if mimir_empty else [{"metric": {"namespace": "kubeai", "pod": "kubeai-demo-failure"},
+            values = [[expected_start + 60, "0.25" if "rate(" in query else "10485760"]]
+        rows = [] if mimir_empty else [{"metric": {"namespace": expected_namespace, "pod": expected_pod},
                                         "values": values} for _ in range(mimir_series)]
         return httpx.Response(200, json={"status": "success", "data": {"resultType": "matrix", "result": rows}})
 
@@ -88,17 +96,17 @@ def client(*, events=None, pods=None, key="", kube_code=200, mimir_code=200, lok
         if timeout_source == "loki":
             raise httpx.ReadTimeout("simulated")
         assert request.url.path == "/loki/api/v1/query_range"
-        assert request.url.params["query"] == '{namespace="kubeai",pod="kubeai-demo-failure"}'
+        assert request.url.params["query"] == f'{{namespace="{expected_namespace}",pod="{expected_pod}"}}'
         assert request.url.params["direction"] == "forward"
         assert int(request.url.params["limit"]) == LokiClient.MAX_LINES + 1
         if loki_code != 200:
             return httpx.Response(loki_code)
-        values = [] if loki_empty else [[str(int((FIRST + 30 + i) * 10**9)),
+        values = [] if loki_empty else [[str(int((expected_start + 30 + i) * 10**9)),
                                          "simulation only: exit code 42"] for i in range(loki_lines)]
         if outside_log:
-            values.append([str(int((FIRST - 30) * 10**9)), "clock divergence"])
+            values.append([str(int((expected_start - 30) * 10**9)), "clock divergence"])
         return httpx.Response(200, json={"status": "success", "data": {"resultType": "streams", "result": [
-            {"stream": {"namespace": "kubeai", "pod": "kubeai-demo-failure", "container": "demo"},
+            {"stream": {"namespace": expected_namespace, "pod": expected_pod, "container": "demo"},
              "values": values}]}})
 
     def llm(request):
@@ -175,6 +183,76 @@ def test_timezone_normalization_and_invalid_interval():
     assert "positif" in error
     _, error = parse_window("incident début=2026-10-19T14:00:00+02:00 fin=2026-10-20T14:00:00+02:00")
     assert "six heures" in error
+
+
+@pytest.mark.parametrize("question", [
+    QUESTION_B_FR,
+    "Du 19/10/2026 de 18h25 à 18h33 UTC, pod kubeai-demo-incident dans le namespace kubeai.",
+    "début=2026-10-19T18:25:00Z fin=2026-10-19T18:33:00Z namespace=kubeai pod=kubeai-demo-incident",
+])
+def test_french_and_explicit_windows_normalize_without_documentation_defaults(question):
+    window, error = parse_window(question)
+    assert error is None
+    assert window["start"].timestamp() == FRENCH_START
+    assert window["end"].timestamp() == FRENCH_END
+    assert window["timezone"] == "UTC"
+    assert window["namespace"] == "kubeai"
+    assert window["pod"] == "kubeai-demo-incident"
+    assert "kubeai-demo-failure" not in HELP
+
+
+def test_chat_window_inherits_same_incident_context_from_previous_user_message():
+    from types import SimpleNamespace
+    messages = [SimpleNamespace(role="user", content=QUESTION_B_FR),
+                SimpleNamespace(role="assistant", content="Ancien exemple : pod other-pod"),
+                SimpleNamespace(role="user", content="Pour ce même incident, corrèle les logs et le CPU")]
+    window, error = parse_chat_window(SimpleNamespace(messages=messages))
+    assert error is None
+    assert window["start"].timestamp() == FRENCH_START
+    assert window["end"].timestamp() == FRENCH_END
+    assert (window["namespace"], window["pod"]) == ("kubeai", "kubeai-demo-incident")
+
+
+@pytest.mark.parametrize("question,stream,scope", [
+    (QUESTION_B_FR, False, "incident"),
+    (QUESTION_B_FR, True, "incident"),
+    (QUESTION_C_FR, False, "correlation"),
+    (QUESTION_C_FR, True, "correlation"),
+])
+def test_exact_french_demo_prompts_search_historical_sources_and_report_empty_data(question, stream, scope):
+    api, calls = client(events=[], pods=[], mimir_empty=True, loki_empty=True,
+                       expected_start=FRENCH_START, expected_end=FRENCH_END,
+                       expected_pod="kubeai-demo-incident")
+    with api:
+        response = ask(api, question, stream=stream)
+    text = sse_body(response) if stream else body(response)
+    assert "2026-10-19T18:25:00Z" in text and "2026-10-19T18:33:00Z" in text
+    assert "kubeai/kubeai-demo-incident" in text
+    assert "Données manquantes" in text or "Données manquantes et limites" in text
+    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1
+    assert all(float(item.url.params["start"]) == FRENCH_START for item in calls["mimir"])
+    assert all(float(item.url.params["end"]) == FRENCH_END for item in calls["mimir"])
+    assert calls["loki"][0].url.params["query"] == '{namespace="kubeai",pod="kubeai-demo-incident"}'
+    if scope == "correlation":
+        assert "cause indéterminée" in text
+    else:
+        assert "Chronologie" in text
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_same_incident_correlation_followup_uses_previous_question_parameters(stream):
+    api, calls = client(events=[], pods=[], mimir_empty=True, loki_empty=True,
+                       expected_start=FRENCH_START, expected_end=FRENCH_END,
+                       expected_pod="kubeai-demo-incident")
+    with api:
+        response = api.post("/v1/chat/completions", json={"model": "kubeai", "stream": stream,
+            "messages": [{"role": "user", "content": QUESTION_B_FR},
+                         {"role": "assistant", "content": "Chronologie disponible."},
+                         {"role": "user", "content": "Pour ce même incident, corrèle les logs et le CPU"}]})
+    text = sse_body(response) if stream else body(response)
+    assert "2026-10-19T18:25:00Z" in text
+    assert "kubeai/kubeai-demo-incident" in text
+    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1
 
 
 def test_explicit_window_followup_routes_to_incident_without_repeating_keyword():
