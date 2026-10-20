@@ -1,293 +1,236 @@
-| Nom de l’étudiant | Identifiant GitHub | Responsabilité |
-| --- | --- | --- |
-| Kevin | À compléter | À compléter collectivement |
-| Vincent | À compléter | À compléter collectivement |
-| Anass | À compléter | À compléter collectivement |
+# P5-G17 | KubeAI
 
-Document initial de travail. Les choix techniques, le périmètre détaillé et la répartition seront validés collectivement.
+Projet collectif de Kevin, Vincent et Anass : un assistant d'observabilité
+Kubernetes qui répond à des questions de santé et d'incident à partir de
+preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`.
 
-# kubeAI — Monitoring Kubernetes clusters with AI
+## Architecture
 
-## But du projet
-
-Créer et déployer sur une infrastructure cloud un assistant conversationnel d’observabilité Kubernetes. Une question en langage naturel doit conduire à des requêtes sur les données du cluster, puis à une analyse compréhensible et étayée pour aider à suivre son état et à enquêter sur un incident.
-
-## Exigences du professeur
-
-Le projet 5 (pages 18 à 21 du document de référence) demande de :
-
-- disposer d’un cluster Kubernetes et d’une pile de supervision Prometheus/Mimir et Loki ; collecter et interroger des métriques et des logs, et exploiter les événements utiles à l’analyse ;
-- choisir un LLM, intégrer Open WebUI comme interface conversationnelle et concevoir un agent qui orchestre les outils et structure ses réponses ;
-- traduire les questions en requêtes, récupérer les données pertinentes et produire une analyse intelligible ;
-- évaluer l’exactitude, la fiabilité, la sécurité et les limites des réponses de l’IA ;
-- réaliser les trois démonstrations et les livrables indiqués ci-dessous.
-
-Le sujet propose `k8s-monitoring` avec Alloy pour la collecte ; il ne l’impose pas. Le bilan des limites, le plan d’amélioration priorisé et d’éventuelles améliorations constituent la phase 3 facultative, selon le temps disponible.
-
-## Trois démonstrations attendues
-
-1. **Santé globale du cluster** : répondre à une question sur l’état général du cluster à partir de ses signaux d’observabilité.
-2. **Investigation d’incident avec chronologie** : rapprocher alertes, métriques et logs pour décrire ce qui arrive à un nœud, un pod ou un service, dans l’ordre des événements.
-3. **Corrélation logs et métriques** : formuler des hypothèses de cause, appuyées par les données et distinguées des faits établis.
-
-Les incidents précis, questions de démonstration et critères chiffrés figurant dans la fiche de réunion sont des propositions à valider, pas des exigences supplémentaires du professeur.
-
-## Périmètre et décisions ouvertes
-
-Les **traces distribuées** sont exclues du périmètre du sujet. La **remédiation automatique** reste une question ouverte dans le PDF : le groupe doit décider si l’assistant se limite à des recommandations ou peut agir, après examen des droits et des risques. Aucun mécanisme de remédiation n’est retenu à ce stade.
-
-Minikube avec le pilote Docker est l’environnement local commun du groupe. Le déploiement cible de collecte utilise Alloy, Mimir, Loki et kube-state-metrics, avec le circuit **Alloy → Mimir + Loki → FastAPI → Mistral API**. Les intégrations Mimir et Mistral ont été vérifiées avec des tests et des réponses simulées ; le fonctionnement sur un vrai cluster et avec une vraie clé API reste à valider. Apertus 8B, apporté par Vincent, reste une option locale explicite. Le fournisseur cloud, les seuils, les scénarios et les critères de validation restent à décider collectivement. Exoscale a été proposé comme fournisseur cloud dans les échanges du groupe ; ce choix ne constitue pas une exigence du professeur.
-
-## Livrables et échéance
-
-Le sujet demande :
-
-1. une documentation ou présentation des exigences et de l’architecture ;
-2. un environnement Kubernetes observable ;
-3. un assistant IA de monitoring ;
-4. un rapport de tests fonctionnels et de résilience ;
-5. une démonstration de scénarios de surveillance et de diagnostic.
-
-**Rendu : 3 novembre 2026 à 8 h 45.**
-
-## Configuration locale
-
-Les commandes de déploiement ci-dessous sont destinées à une machine adaptée,
-utilisée par un membre du groupe. Sur le poste Windows de 8 Go, limiter la validation
-aux tests du backend et au rendu des manifests, sans démarrer Docker, Minikube,
-Mimir ou un LLM. Voir [les ressources et la validation Mimir](k8s/monitoring/README.md).
-
-Prérequis : Docker Desktop, Minikube et kubectl. Depuis la racine du dépôt, démarre Minikube puis vérifie que tu utilises le bon cluster :
-
-    minikube start --driver=docker
-    kubectl config current-context
-    kubectl get nodes
-
-Le profil de chat par défaut est `mistral-api`. Le profil `local` réutilise le
-même backend et le même modèle virtuel `kubeai` avec un endpoint OpenAI-compatible.
-La configuration PowerShell et le basculement Kubernetes sont décrits dans
-[l'architecture des profils LLM](docs/architecture-llm-profiles.md).
-La création d'un Secret
-`kubeai-mistral` et la décision du groupe sur les données envoyées sont décrites
-dans [la configuration Mistral](docs/mistral-api.md). Aucun moteur local ni poids
-de modèle ne sont requis pour les tests du backend sur Windows. Sur une machine
-adaptée, le déploiement habituel reste :
-
-```bash
-bash start.sh minikube
-```
-
-Ce script ne télécharge ni ne démarre Apertus. Voir [le profil Apertus facultatif](llm/README.md)
-pour ses ressources et ses commandes explicites.
-
-Le contexte attendu est minikube et le nœud doit être Ready. Avec Bash, `./start.sh`
-construit l'image de l'agent dans Minikube, applique tous les manifests et attend
-les déploiements. Pour utiliser directement kubectl (notamment dans PowerShell),
-construire d'abord l'image :
-
-    minikube image build -t kubeai-agent:0.1.0 ./agent
-
-Appliquer ensuite les manifests et vérifier les pods applicatifs et de monitoring :
-
-    kubectl apply -k .\k8s\
-    kubectl get pods -n kubeai
-    kubectl get pods -n monitoring
-
-Quand le pod Open WebUI est Running, ouvre l’interface :
-
-    minikube service open-webui -n kubeai --url
-
-Garde Minikube en marche pendant l’utilisation de l’adresse affichée. Le script Bash
-`./start.sh` cible explicitement le contexte `minikube`, construit l'image et
-redémarre l'agent, applique les manifests et attend les déploiements, mais ne démarre
-pas Minikube. Pour un autre contexte passé en argument, l'image de l'agent doit être
-préparée et accessible au cluster ; le script ne la construit pas dans Minikube.
-
-## Collecte des métriques et des logs
-
-Le dossier [k8s/monitoring](k8s/monitoring/README.md) contient l'installation Kustomize,
-les configurations, les droits RBAC et le stockage persistant. Alloy envoie les
-métriques CPU/mémoire et l'état des pods dans Mimir, et les logs dans Loki.
-L'agent interroge Mimir via son API compatible Prometheus/PromQL et Loki pour les logs. Il transmet
-une observation récente et limitée à Mistral API pour préparer les réponses du chat.
-
-Après le déploiement, vérifier la collecte complète avec Python 3 :
-
-```bash
-python3 scripts/verify-observability.py --context minikube
-```
-
-Le test crée un pod temporaire, retrouve ses mesures dans Mimir et son message
-unique dans Loki, puis supprime le pod. Sous Windows, utiliser `python` si nécessaire.
-Les services de monitoring restent internes au cluster ; voir leur README pour
-les tunnels locaux et les exemples de requêtes.
-
-## API de l'agent
-
-Le backend FastAPI dans [agent/](agent/README.md) expose `GET /cluster/status` :
-inventaire des pods de `kubeai`, disponibilité, erreurs, redémarrages, CPU et mémoire.
-Les données absentes et pannes des sources sont signalées explicitement.
-`GET /cluster/inventory` ajoute une lecture bornée des nœuds, des pods de tous les
-namespaces et des événements, avec disponibilité indiquée pour chaque source.
-
-```bash
-kubectl --context minikube port-forward -n kubeai service/kubeai-agent 8000:8000
-```
-
-Consulter <http://127.0.0.1:8000/cluster/status>,
-<http://127.0.0.1:8000/cluster/inventory> ou la documentation interactive
-<http://127.0.0.1:8000/docs>. Voir le [contrat API](docs/api-contract.md) pour le
-périmètre et les unités. `POST /diagnose` retourne une analyse avec les observations,
-et `/v1/chat/completions` fournit le streaming utilisé par Open WebUI.
-
-## Chat avec Mistral API
-
-Open WebUI est préconfiguré pour le modèle virtuel **kubeai** servi par l'agent.
-Après le démarrage, ouvrir <http://127.0.0.1:8080> avec le tunnel habituel et poser :
-
-> Quels pods ont un problème dans kubeai ? Appuie ta réponse sur les données disponibles.
-
-Le backend appelle Mistral API en HTTPS après avoir collecté et filtré l'observation.
-La décision sur la région d'inférence et l'utilisation de données sensibles reste à
-valider en groupe. Ne pas envoyer de données sensibles réelles avant cette décision.
-Les réponses portent sur `kubeai`, jusqu'à 20 pods et un extrait borné des logs
-récents. Les données manquantes sont indiquées. Les conversations sont conservées
-sur le PVC Open WebUI ; l'agent n'exécute aucune remédiation. Le profil local
-Apertus et l'identifiant historique `kubeai-apertus` sont conservés pour
-compatibilité ; cet identifiant suit le fournisseur actif. Voir
-[la configuration Mistral](docs/mistral-api.md) pour la clé et les limites.
-
-Pour créer un incident simulé et demander au chat de l'identifier :
-
-```bash
-./start-failure.sh
-```
-
-Le manifeste est dans [k8s/demo/failure-pod.yaml](k8s/demo/failure-pod.yaml), hors du
-déploiement normal. Le script attend l'état `Failed`, affiche les logs et laisse le pod visible pour
-l'assistant. Il termine volontairement avec le code `42`, sans redémarrage et sans
-vérifier réellement une variable ou une base de données. Poser la question dans
-les dix minutes, fenêtre des logs transmise au modèle. Pour supprimer ce pod :
-
-```bash
-./stop-failure.sh
-```
-
-Les deux scripts ciblent `minikube` par défaut et acceptent un autre contexte en
-premier argument. Relancer le démarrage conserve le pod existant ; pour rejouer
-l'incident avec de nouveaux logs, exécuter l'arrêt puis le démarrage.
-
-## Validation locale
-
-### Démarrer Docker et Minikube
-
-Depuis un terminal PowerShell :
-
-```powershell
-docker version
-docker ps
-
-minikube start --driver=docker
-```
-
-### Vérifier Kubernetes
-
-```powershell
-kubectl config current-context
-minikube status
-kubectl get nodes
-```
-
-Résultat attendu :
-
-- contexte : `minikube` ;
-- `host` : `Running` ;
-- `kubelet` : `Running` ;
-- `apiserver` : `Running` ;
-- nœud : `Ready`.
-
-### Appliquer les manifests
-
-Depuis la racine du dépôt :
-
-```powershell
-minikube image build -t kubeai-agent:0.1.0 ./agent
-kubectl apply -k .\k8s\
-```
-
-Vérifier les ressources et le démarrage d’Open WebUI :
-
-```powershell
-kubectl get pods -n kubeai
-kubectl get pods -n monitoring
-kubectl get service -n kubeai
-kubectl get endpoints -n kubeai
-kubectl rollout status deployment/open-webui -n kubeai --timeout=5m
-kubectl rollout status deployment/kubeai-agent -n kubeai --timeout=5m
-kubectl rollout status deployment/mimir -n monitoring --timeout=5m
-kubectl rollout status deployment/loki -n monitoring --timeout=5m
-kubectl rollout status deployment/alloy -n monitoring --timeout=5m
-kubectl rollout status deployment/kube-state-metrics -n monitoring --timeout=5m
-```
-
-Pour rendre les manifests sans connexion au cluster, utiliser :
-
-```powershell
-kubectl kustomize .\k8s\
-```
-
-Le rendu vérifie l'assemblage Kustomize ; il ne valide pas le démarrage ni le schéma
-des configurations Mimir/Alloy. Aucun serveur Prometheus autonome n'est inclus.
-`kubectl apply -k` ne supprime pas un ancien serveur Prometheus ou PVC déjà présent
-dans un cluster ; son arrêt devra être organisé après validation de Mimir.
-Conserver les PVC et les données existantes ; aucun nettoyage automatique par
-`--prune` n'est prévu.
-
-### Accéder à Open WebUI
-
-Dans un terminal séparé, démarrer le port-forward et garder ce terminal ouvert :
-
-```powershell
-kubectl port-forward -n kubeai service/open-webui 8080:80
-```
-
-Dans un autre terminal ou dans le navigateur, tester l’accès :
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:8080 -UseBasicParsing
-```
-
-Résultat attendu :
+Deux flux se rejoignent dans le backend :
 
 ```text
-HTTP 200
+Kubernetes ──> Grafana Alloy ── métriques ──> Mimir (PromQL) ──┐
+                                  logs ──────> Loki (LogQL) ────┼──> FastAPI
+Kubernetes API (lecture seule) ────────────────────────────────┘       │
+                                                                       ├──> Mistral API
+Open WebUI ── modèle virtuel kubeai ──────────────────────────────────┘     ou Apertus local
 ```
 
-L’interface est accessible à :
-
-```text
-http://127.0.0.1:8080
-```
-
-### Arrêter le tunnel
-
-Dans le terminal du port-forward, appuyer sur `Ctrl + C`.
-
-## Explication des commandes de validation
-
-| Commande | Rôle |
+| Bloc | Responsabilité |
 |---|---|
-| `docker version` | Vérifie que Docker Desktop fonctionne. |
-| `minikube status` | Vérifie l’état du cluster Minikube. |
-| `kubectl config current-context` | Affiche le cluster Kubernetes utilisé. La valeur attendue est `minikube`. |
-| `kubectl get nodes` | Affiche les nœuds Kubernetes. Le nœud `minikube` doit être `Ready`. |
-| `kubectl kustomize .\k8s\` | Produit le rendu des manifests sans joindre ni modifier le cluster. |
-| `kubectl get pods -n kubeai` | Affiche les applications du projet dans le namespace `kubeai`. |
-| `kubectl rollout status deployment/open-webui -n kubeai --timeout=5m` | Vérifie que le déploiement Open WebUI est terminé et prêt. |
-| `kubectl port-forward -n kubeai service/open-webui 8080:80` | Crée un tunnel entre le port local 8080 et Open WebUI dans Kubernetes. |
+| Kubernetes | Exécute la pile et les scénarios de démonstration. |
+| Alloy | Collecte les métriques de kube-state-metrics et des pods annotés du namespace `kubeai`, puis les logs de ce namespace. |
+| Mimir | Stocke les métriques et répond aux requêtes PromQL historiques. |
+| Loki | Stocke les logs consultés par LogQL. |
+| FastAPI | Orchestre l'inventaire en lecture seule, les requêtes Mimir/Loki, les diagnostics A/B/C et l'API compatible OpenAI. |
+| Mistral API / Apertus local | Fournit une analyse facultative et contrainte par les preuves calculées. Le profil est choisi par configuration. |
+| Open WebUI | Interface conversationnelle authentifiée qui appelle FastAPI avec le modèle `kubeai`. |
 
-Après le `port-forward`, ouvrir :
+Les manifests actifs se trouvent dans [`k8s/`](k8s/). Les configurations
+spécifiques sont décrites dans [`docs/architecture.md`](docs/architecture.md),
+[`docs/architecture-llm-profiles.md`](docs/architecture-llm-profiles.md),
+[`docs/mistral-api.md`](docs/mistral-api.md) et
+[`k8s/monitoring/README.md`](k8s/monitoring/README.md).
+Le document d'architecture fourni avec le sujet,
+[`docs/Group-17-Architecture.pdf`](docs/Group-17-Architecture.pdf), est conservé
+comme référence initiale.
 
-http://127.0.0.1:8080
+## État du projet et démonstrations
 
-Le terminal qui exécute le `port-forward` doit rester ouvert. Pour arrêter le tunnel, utiliser `Ctrl+C`.
+L'équipe a validé les démonstrations A/B/C depuis Open WebUI sur le cluster
+Docker Desktop : santé globale, chronologie d'incident avec 52 observations
+historiques Mimir/Loki, puis corrélation entre les marqueurs de scénario et la
+métrique CPU du processus applicatif. Consultez
+[`docs/demo-scenarios.md`](docs/demo-scenarios.md) pour les questions, preuves,
+limites et étapes de reproduction. Les tests automatisés emploient des sources
+simulées et ne remplacent pas une validation du cluster.
+
+## Sécurité et limites
+
+- FastAPI lit les nœuds, pods et événements avec des permissions Kubernetes
+  limitées aux verbes de lecture nécessaires (`list`). Il n'accède pas aux
+  Secrets via l'API et ne modifie aucune ressource.
+- Alloy conserve des droits restreints. Aucun accès `nodes/proxy` ni scraping
+  cAdvisor n'est requis par la configuration actuelle.
+- Les logs sont lus dans Loki ; les métriques proviennent de Mimir. Les séries
+  applicatives sont collectées par opt-in via annotations Prometheus dans
+  `kubeai`. Sans instrumentation, la latence HTTP et les erreurs applicatives
+  restent inconnues.
+- `process_cpu_seconds_total` décrit le temps CPU consommé par le processus.
+  Ce n'est ni le CPU total du conteneur ni un pourcentage de sa limite.
+- A/B/C distinguent les faits horodatés, les hypothèses et les données absentes.
+  Une proximité temporelle ne prouve pas une cause. L'application ne réalise
+  aucune remédiation automatique.
+- Mistral est un service externe : le filtrage des données réduit certains
+  risques, mais ne constitue pas une anonymisation. N'envoyez que des données
+  autorisées par le groupe. Les tests n'effectuent aucun appel Mistral.
+- Le poste de développement dispose de 8 Go de RAM. Les mesures réellement
+  observées et les plafonds déclarés ne sont pas équivalents ; ne démarrez pas
+  de composants supplémentaires si le cluster ou Windows est sous pression.
+- Les événements Kubernetes ont une rétention limitée et les séries Mimir
+  dépendent de leur durée de rétention. Une absence de données n'est jamais
+  interprétée comme une valeur nulle ou un état sain.
+
+## Préparation de l'environnement
+
+Prérequis : Windows PowerShell, Python 3.12, `kubectl`, Kustomize (via
+`kubectl kustomize`), un cluster Kubernetes déjà opérationnel et les dépendances
+Python du dossier `agent/`. Aucun modèle local n'est téléchargé par ces étapes.
+
+Depuis la racine du dépôt, contrôler le contexte explicitement choisi et rendre
+les manifests sans les appliquer :
+
+```powershell
+$Context = 'docker-desktop'
+kubectl --context $Context config current-context
+kubectl --context $Context get nodes
+kubectl kustomize .\k8s\
+kubectl kustomize .\k8s\monitoring\
+```
+
+Le rendu Kustomize vérifie l'assemblage des ressources ; il ne démarre pas le
+cluster et ne valide pas la disponibilité des images, le stockage ou la syntaxe
+interne de chaque configuration de service. Pour un premier déploiement sur une
+machine adaptée, consulter les instructions complètes du [monitoring](k8s/monitoring/README.md)
+et de l'[agent FastAPI](agent/README.md). Ne pas utiliser `--prune` et ne
+supprimer aucun PVC pendant une mise à jour.
+
+Une fois le cluster choisi, ses prérequis satisfaits et l'image d'agent
+disponible dans son registre/runtime, le déploiement commun s'applique depuis
+la racine :
+
+```powershell
+$Context = 'docker-desktop'
+kubectl --context $Context apply -k .\k8s\
+kubectl --context $Context -n monitoring rollout status deployment/mimir --timeout=5m
+kubectl --context $Context -n monitoring rollout status deployment/loki --timeout=5m
+kubectl --context $Context -n monitoring rollout status deployment/alloy --timeout=5m
+kubectl --context $Context -n monitoring rollout status deployment/kube-state-metrics --timeout=5m
+kubectl --context $Context -n kubeai rollout status deployment/kubeai-agent --timeout=5m
+kubectl --context $Context -n kubeai rollout status deployment/open-webui --timeout=5m
+```
+
+`kubectl apply -k` suppose que les Secrets référencés existent et que les
+images sont accessibles. Sur Minikube, la construction locale de l'image est
+documentée dans [`agent/README.md`](agent/README.md). N'exécuter ces commandes
+que sur un cluster autorisé et avec les ressources nécessaires.
+
+## Secrets et authentification
+
+Ne versionnez jamais `.env`, une clé Mistral, un token kubeconfig ou un Secret.
+Le fichier `.env.example` ne contient que des valeurs factices. En local,
+FastAPI ne charge le `.env` racine que lorsque `KUBEAI_ENV=development` est
+défini avant son démarrage ; les variables déjà présentes gardent la priorité.
+Kubernetes n'utilise pas ce chargement local.
+
+Pour un FastAPI déployé dans Kubernetes, l'API Bearer est fournie par le Secret
+`kubeai-api-auth` (clé `api-key`) à FastAPI et Open WebUI. Les deux valeurs
+doivent être créées à partir du même fichier privé, hors du dépôt. La clé
+Mistral est indépendante et peut être montée depuis le Secret `kubeai-mistral` :
+
+```powershell
+$Context = 'docker-desktop'
+$ApiKeyFile = 'C:\chemin-prive\kubeai-api-key.txt'
+$MistralKeyFile = 'C:\chemin-prive\mistral-api-key.txt'
+kubectl --context $Context -n kubeai create secret generic kubeai-api-auth --from-file="api-key=$ApiKeyFile"
+kubectl --context $Context -n kubeai create secret generic kubeai-mistral --from-file="api-key=$MistralKeyFile"
+```
+
+Exécuter ces commandes uniquement si les Secrets ne sont pas déjà présents ;
+elles ne remplacent pas un Secret existant. Garder les fichiers hors du dépôt,
+restreindre leurs ACL Windows et ne pas afficher leur contenu. Les instructions
+sur les droits et la configuration LLM sont dans [`agent/README.md`](agent/README.md)
+et [`docs/mistral-api.md`](docs/mistral-api.md).
+
+## Démarrage Windows — backend local
+
+Pour exécuter FastAPI directement sur Windows, utiliser un kubeconfig privé
+contenant le contexte `kubeai-readonly`. Ce compte doit seulement lire les
+ressources requises par l'agent. Vérifier les permissions sans imprimer les
+credentials :
+
+```powershell
+$KubeConfig = "$env:USERPROFILE\.kube\kubeai-readonly"
+kubectl --kubeconfig $KubeConfig --context kubeai-readonly auth can-i list nodes
+kubectl --kubeconfig $KubeConfig --context kubeai-readonly auth can-i list pods --all-namespaces
+kubectl --kubeconfig $KubeConfig --context kubeai-readonly auth can-i list events --all-namespaces
+```
+
+Dans deux terminaux PowerShell séparés, ouvrir des tunnels locaux vers Mimir et
+Loki. Utiliser un contexte qui dispose des droits de port-forward ; il peut être
+différent du contexte limité utilisé par FastAPI :
+
+```powershell
+$TunnelContext = 'docker-desktop'
+kubectl --context $TunnelContext -n monitoring port-forward --address 127.0.0.1 service/mimir 9009:9009
+```
+
+```powershell
+$TunnelContext = 'docker-desktop'
+kubectl --context $TunnelContext -n monitoring port-forward --address 127.0.0.1 service/loki 3100:3100
+```
+
+Dans un troisième terminal, depuis la racine du dépôt, démarrer le backend :
+
+```powershell
+$env:KUBEAI_ENV = 'development'
+$env:KUBERNETES_ACCESS_MODE = 'kubeconfig'
+$env:KUBERNETES_CONTEXT = 'kubeai-readonly'
+$env:KUBERNETES_KUBECONFIG_FILE = "$env:USERPROFILE\.kube\kubeai-readonly"
+$ApiKeyFile = 'C:\chemin-prive\kubeai-api-key.txt'
+$env:KUBEAI_API_KEY = (Get-Content -Raw $ApiKeyFile).Trim()
+$env:MIMIR_URL = 'http://127.0.0.1:9009/prometheus'
+$env:LOKI_URL = 'http://127.0.0.1:3100'
+Set-Location .\agent
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+La clé API Mistral privée est lue depuis `.env` en mode développement. La clé
+Bearer de l'API FastAPI (`KUBEAI_API_KEY`) doit être configurée dans
+l'environnement privé du backend et dans Open WebUI. Vérifier `/health`,
+`/ready`, `/cluster/inventory` puis `/cluster/status` avant de lancer une
+question. Ces contrôles n'appellent pas Mistral.
+
+Pour l'architecture complète, Open WebUI et FastAPI communiquent par le Service
+interne `http://kubeai-agent.kubeai.svc.cluster.local:8000/v1`. Si Open WebUI
+tourne dans Kubernetes et FastAPI sur Windows, `127.0.0.1` dans le pod désigne
+le pod lui-même : utiliser uniquement le chemin de passerelle Docker Desktop
+restreint déjà validé pour l'environnement, puis vérifier la connectivité depuis
+Open WebUI. Ne liez pas FastAPI à une interface publique, ne désactivez pas le
+pare-feu et n'ouvrez pas un port au réseau général. Si ce chemin local n'est pas
+disponible, déployer FastAPI dans le cluster et conserver l'URL Service interne.
+
+Open WebUI est authentifié, utilise l'ID de modèle `kubeai` et affiche le nom
+`P5-G17 | KubeAI`. Pour l'ouvrir via un tunnel limité à Windows localhost :
+
+```powershell
+$TunnelContext = 'docker-desktop'
+kubectl --context $TunnelContext -n kubeai port-forward --address 127.0.0.1 service/open-webui 8080:80
+```
+
+Ouvrir <http://127.0.0.1:8080>. La configuration persistée dans Open WebUI peut
+prévaloir sur les valeurs d'environnement du manifeste ; vérifier le nom et la
+connexion API dans l'interface d'administration.
+
+## Tests du backend
+
+Les tests unitaires et HTTP utilisent des transports simulés ; aucun cluster,
+Secret ni appel Mistral réel n'est nécessaire :
+
+```powershell
+Set-Location .\agent
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+..\.venv\Scripts\python.exe -B -m pytest tests --ignore=tests/integration -q -p no:cacheprovider
+..\.venv\Scripts\python.exe -m compileall -q app tests
+```
+
+Les tests ignorés ou exclus ne doivent pas être déclarés réussis sans exécution.
+Pour les vérifications réelles des démonstrations, suivre le protocole de
+[`docs/demo-scenarios.md`](docs/demo-scenarios.md) dans un cluster autorisé.
+
+## Équipe et livrables
+
+Le dépôt `kubeAI` est un travail collectif de **Kevin, Vincent et Anass**.
+La description de la conception de départ est conservée dans le PDF fourni ;
+la documentation de livraison décrit l'architecture et les comportements
+effectivement présents dans le dépôt.

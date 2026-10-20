@@ -243,10 +243,100 @@ def build(window, inventory, metrics, logs, failures):
 
 def render(report, ai_note):
     resource = "/".join(s for s in (report["namespace"], report["pod"]) if s) or "cluster"
+    timeline = report["timeline"]
+    phases = {}
+    for item in timeline:
+        if item["source"] == "Loki" and "KUBEAI_DEMO_INCIDENT" in item["observation"]:
+            match = re.search(r"phase=(normal|anomaly_start|recovered|complete)", item["observation"])
+            if match:
+                phases.setdefault(match.group(1), item)
+    key_items = list(phases.values())
+    candidates = [item for item in timeline if item["source"] == "Kubernetes" and
+                  re.search(r"warning|failed|oomkilled|unhealthy|backoff", item["observation"], re.I)]
+    candidates.extend(item for item in timeline if item["source"] == "Loki" and item not in key_items)
+    app_cpu_items = [item for item in timeline if item["source"] == "Mimir" and
+                     "app_cpu_cores" in item["reference"] and item not in key_items]
+    if app_cpu_items:
+        candidates.append(app_cpu_items[len(app_cpu_items) // 2])
+    candidates.extend(item for item in timeline if item not in key_items and item not in candidates and
+                      not any(f"query_range {name} " in item["reference"]
+                              for name in ("cpu_limit_cores", "memory_limit_bytes")))
+    for item in candidates:
+        if len(key_items) >= 8:
+            break
+        if item not in key_items:
+            key_items.append(item)
+    key_items = sorted({item["reference"] + item["timestamp"]: item for item in key_items}.values(),
+                       key=lambda item: item["timestamp"])
     lines = ["**Incident concerné**", f"Ressource : {resource} ; intervalle {report['start']} → {report['end']} "
-             f"(fuseau fourni : {report['timezone']}).", "", "**Chronologie**"]
-    lines += [f"- {e['timestamp']} · {e['source']} · {e['resource']} · {e['observation']} "
-              f"[preuve : {e['reference']}]" for e in report["timeline"]] or ["- Aucune observation datée disponible."]
+             f"(fuseau fourni : {report['timezone']}).", "", "**Chronologie** — synthèse des observations"]
+    lines += [f"- {e['timestamp']} · {e['source']} · {e['resource']} · {e['observation']}"
+              for e in key_items] or ["- Aucune observation significative datée disponible."]
+    lines += ["", "**CPU du processus applicatif : avant / pendant / après**"]
+    app_points = []
+    for item in timeline:
+        if item["source"] == "Mimir" and "app_cpu_cores" in item["reference"]:
+            match = re.search(r"Échantillon mesuré\s*:\s*([0-9]+(?:\.[0-9]+)?)", item["observation"])
+            if match:
+                app_points.append((item["timestamp"], float(match.group(1))))
+    anomaly = next((datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
+                    for phase, item in phases.items() if phase == "anomaly_start"), None)
+    recovered = next((datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
+                      for phase, item in phases.items() if phase == "recovered"), None)
+    if app_points and anomaly:
+        before = [value for stamp_value, value in app_points
+                  if datetime.fromisoformat(stamp_value.replace("Z", "+00:00")) < anomaly]
+        during = [value for stamp_value, value in app_points
+                  if datetime.fromisoformat(stamp_value.replace("Z", "+00:00")) >= anomaly and
+                  (recovered is None or datetime.fromisoformat(stamp_value.replace("Z", "+00:00")) < recovered)]
+        after = [value for stamp_value, value in app_points
+                 if recovered and datetime.fromisoformat(stamp_value.replace("Z", "+00:00")) >= recovered]
+        def cpu_range(label, values):
+            if not values:
+                return f"{label} : aucun échantillon."
+            summary = f"{label} : {min(values):.4f}–{max(values):.4f} cœur(s) de processus, {len(values)} échantillon(s)"
+            if len(values) == 1:
+                summary += "; variation non calculable."
+            else:
+                summary += f"; écart observé {max(values) - min(values):.4f} cœur(s)."
+            return summary
+        lines.extend("- " + cpu_range(label, values) for label, values in
+                     (("Avant l'anomalie", before), ("Pendant l'anomalie", during), ("Après la récupération", after)))
+    else:
+        lines.append("- Série CPU applicative ou marqueur de phase absent ; aucune comparaison temporelle possible.")
+    lines.append("- Cette série mesure le temps CPU du processus ; elle ne représente pas le CPU total du conteneur ni un pourcentage de limite.")
+    lines += ["", f"**Observations et références détaillées ({len(timeline)} observations)**"]
+    details, grouped_limits, seen_limits = [], {}, set()
+    for item in timeline:
+        metric = next((name for name in ("cpu_limit_cores", "memory_limit_bytes")
+                       if f"query_range {name} " in item["reference"]), None)
+        if item["source"] == "Mimir" and metric:
+            key = (metric, item["resource"], item["observation"])
+            grouped_limits.setdefault(key, []).append(item)
+            if key not in seen_limits:
+                details.append(("limit", key))
+                seen_limits.add(key)
+        else:
+            details.append(("entry", item))
+    for kind, value in details:
+        if kind == "entry":
+            item = value
+            lines.append(f"- {item['timestamp']} · {item['source']} · {item['resource']} · {item['observation']} "
+                         f"[preuve : {item['reference']}]")
+            continue
+        metric, grouped_resource, observation = value
+        samples = grouped_limits[value]
+        if len(samples) == 1:
+            item = samples[0]
+            lines.append(f"- {item['timestamp']} · Mimir · {grouped_resource} · {observation} "
+                         f"[preuve : {item['reference']}]")
+            continue
+        timestamps = ", ".join(item["timestamp"] for item in samples)
+        references = "; ".join(item["reference"] for item in samples)
+        lines.append(f"- Mimir · {grouped_resource} · {observation} — valeur constante observée sur "
+                     f"{len(samples)} échantillons ({timestamps}) [preuves : {references}]")
+    if not details:
+        lines.append("- Aucune observation datée disponible.")
     lines += ["", "**Constats**", f"{len(report['timeline'])} observation(s) datée(s)."]
     for pod in report["current_pods"]:
         lines.append(f"État actuel seulement : {pod['resource']} {pod['phase']}, "
@@ -289,8 +379,16 @@ async def investigate(service, chat):
     # demo B can show all real, timestamped sources in one ordered timeline.
     report, _, _, _ = await collect(service, window, include_correlation=True)
     provider_name = service.llm.provider_name
-    ai_note = f"{provider_name} indisponible ; chronologie déterministe conservée."
-    if service.sensitive_values() and report["timeline"]:
+    sensitive_values = service.sensitive_values()
+    local_provider = service.llm.settings.llm_provider == "local"
+    can_call = bool(sensitive_values) or local_provider
+    if not report["timeline"]:
+        ai_note = f"{provider_name} non sollicité : aucune observation historique à prioriser ; chronologie déterministe conservée."
+    elif not can_call:
+        ai_note = f"{provider_name} non sollicité : clé non configurée ; chronologie déterministe conservée."
+    else:
+        ai_note = f"{provider_name} n'a pas été sollicité ; chronologie déterministe conservée."
+    if can_call and report["timeline"]:
         try:
             # La sélection de priorité ne requiert ni le contenu des logs ni les messages des événements.
             model_input = {"sources": report["sources"], "timeline": [
@@ -304,8 +402,15 @@ async def investigate(service, chat):
             names = {"kubernetes_events": "Kubernetes", "mimir": "Mimir", "loki": "Loki"}
             if focus in names and any(e["source"] == names[focus] for e in report["timeline"]):
                 ai_note = f"{provider_name} suggère de vérifier d'abord {names[focus]} ; aucune cause n'en est déduite."
-            elif focus != "none":
-                ai_note = f"Suggestion {provider_name} non étayée écartée ; chronologie déterministe conservée."
-        except (UpstreamError, KeyError, IndexError, TypeError, ValueError):
-            pass
+            elif focus == "none":
+                ai_note = f"{provider_name} a répondu ; aucune source n'a été priorisée. Chronologie déterministe conservée."
+            else:
+                ai_note = f"Réponse de {provider_name} rejetée : priorité proposée non étayée par les sources présentes."
+        except UpstreamError as error:
+            if "Réponse JSON" in error.message:
+                ai_note = f"Réponse API de {provider_name} rejetée : format de réponse invalide. Chronologie déterministe conservée."
+            else:
+                ai_note = f"Appel à {provider_name} échoué ({error.message}) ; chronologie déterministe conservée."
+        except (KeyError, IndexError, TypeError, ValueError):
+            ai_note = f"Réponse de {provider_name} rejetée : format ou priorité invalide. Chronologie déterministe conservée."
     return render(report, ai_note), report

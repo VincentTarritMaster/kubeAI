@@ -12,7 +12,7 @@ from app.clients.loki_client import LokiClient
 from app.clients.prometheus_client import PrometheusClient
 from app.config import Settings
 from app.main import create_app
-from app.services.incident_timeline import HELP, parse_chat_window, parse_window
+from app.services.incident_timeline import HELP, parse_chat_window, parse_window, render
 
 START = "2026-10-19T14:00:00+02:00"
 END = "2026-10-19T14:30:00+02:00"
@@ -271,6 +271,67 @@ def test_empty_window_and_expired_events_are_not_falsely_healthy():
     assert report["timeline"] == [] and report["data_status"] == "partial"
     assert "expiré" in response.json()["answer"]
     assert "Aucune observation datée" in response.json()["answer"]
+    assert "non sollicité" in response.json()["answer"]
+    assert "Mistral API indisponible" not in response.json()["answer"]
+
+
+def test_incident_distinguishes_real_provider_failure_from_unrequested_analysis():
+    api, calls = client(key="test-only-key", llm_code=503)
+    with api:
+        response = api.post("/diagnose", json={"question": QUESTION})
+    text = response.json()["answer"]
+    assert "Appel à Mistral API échoué" in text and "HTTP 503" in text
+    assert "chronologie déterministe conservée" in text
+    assert calls["llm"] and "test-only-key" not in text
+
+
+def test_incident_reports_valid_model_answer_without_prioritization():
+    api, calls = client(key="test-only-key", llm_text='{"focus":"none"}')
+    with api:
+        text = api.post("/diagnose", json={"question": QUESTION}).json()["answer"]
+    assert "Mistral API a répondu ; aucune source n'a été priorisée" in text
+    assert calls["llm"]
+
+
+def test_incident_rejects_model_priority_without_matching_source_evidence():
+    api, calls = client(key="test-only-key", llm_text='{"focus":"mimir"}',
+                       events=[], mimir_empty=True, loki_lines=1)
+    with api:
+        text = api.post("/diagnose", json={"question": QUESTION}).json()["answer"]
+    assert "Réponse de Mistral API rejetée" in text and "non étayée" in text
+    assert calls["llm"]
+
+
+def test_incident_summary_orders_phases_summarizes_cpu_and_keeps_all_detail():
+    phases = [(0, "normal"), (90, "anomaly_start"), (180, "recovered"), (240, "complete")]
+    timeline = [{"timestamp": datetime.fromtimestamp(FIRST + second, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+                 "source": "Loki", "resource": "kubeai/kubeai-demo-incident",
+                 "observation": f"KUBEAI_DEMO_INCIDENT phase={phase}", "reference": f"Loki {phase}"}
+                for second, phase in phases]
+    for second, value in ((30, 0.001), (60, 0.002), (120, 0.08), (150, 0.1), (210, 0.003)):
+        timeline.append({"timestamp": datetime.fromtimestamp(FIRST + second, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+                         "source": "Mimir", "resource": "kubeai/kubeai-demo-incident",
+                         "observation": f"Échantillon mesuré : {value:.4f} cœur(s) CPU du processus applicatif.",
+                         "reference": f"query_range app_cpu_cores kubeai/kubeai-demo-incident @ {second}"})
+    for second in (15, 45, 75):
+        timeline.append({"timestamp": datetime.fromtimestamp(FIRST + second, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+                         "source": "Mimir", "resource": "kubeai/kubeai-demo-incident",
+                         "observation": "Échantillon mesuré : 0.5000 cœur(s) de limite CPU.",
+                         "reference": f"query_range cpu_limit_cores kubeai/kubeai-demo-incident @ {second}"})
+    timeline.sort(key=lambda item: item["timestamp"])
+    text = render({"namespace": "kubeai", "pod": "kubeai-demo-incident",
+                   "start": "2026-10-19T12:00:00Z", "end": "2026-10-19T12:30:00Z",
+                   "timezone": "UTC", "timeline": timeline, "current_pods": [],
+                   "missing": [], "warnings": []}, "Mistral non sollicité.")
+    summary = text.split("**Chronologie** — synthèse des observations", 1)[1].split("**CPU du processus", 1)[0]
+    assert [summary.index(f"phase={phase}") for phase in ("normal", "anomaly_start", "recovered", "complete")] == sorted(
+        summary.index(f"phase={phase}") for phase in ("normal", "anomaly_start", "recovered", "complete"))
+    assert "Avant l'anomalie" in text and "Pendant l'anomalie" in text and "Après la récupération" in text
+    assert "0.0200 cœur(s)" in text
+    assert "Observations et références détaillées (12 observations)" in text
+    assert "Loki complete" in text and "query_range app_cpu_cores" in text
+    assert text.count("cœur(s) de limite CPU.") == 1
+    assert all(f"cpu_limit_cores kubeai/kubeai-demo-incident @ {second}" in text for second in (15, 45, 75))
 
 
 def test_incident_timeline_contains_real_source_entries_only():

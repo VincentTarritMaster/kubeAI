@@ -244,6 +244,8 @@ def test_json_sse_diagnose_and_no_paid_call_without_key():
         streamed = stream_text(ask(api, stream=True))
         diagnosed = api.post("/diagnose", json={"question": QUESTION})
     assert "demo_cpu_activity" in text and "demo_cpu_activity" in streamed
+    assert "Mistral API non sollicité" in text
+    assert "indisponible" not in text
     assert diagnosed.json()["observation"]["scope"] == "correlation"
     assert diagnosed.json()["observation"]["hypotheses"][0]["id"] == "demo_cpu_activity"
     assert len(calls["mimir"]) == 18 and len(calls["loki"]) == 3 and calls["llm"] == []
@@ -290,7 +292,20 @@ def test_mistral_failure_and_invented_text_never_replace_computed_facts():
         with api:
             text = answer(ask(api))
         assert "demo_cpu_activity" in text and "base NestJS est détruite" not in text
+        if options.get("llm_code") == 503:
+            assert "Appel à Mistral API échoué" in text and "HTTP 503" in text
+        else:
+            assert "Réponse de Mistral API rejetée" in text
         assert len(calls["llm"]) == 1
+
+
+def test_mistral_valid_none_answer_is_not_reported_as_unavailable():
+    api, calls = make_client(key="test-only-key", llm_text='{"priority":"none"}')
+    with api:
+        text = answer(ask(api))
+    assert "Mistral API a répondu ; aucune hypothèse n'a été priorisée" in text
+    assert "indisponible" not in text
+    assert len(calls["llm"]) == 1
 
 
 def test_mistral_can_only_prioritize_a_supported_hypothesis():

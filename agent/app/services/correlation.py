@@ -201,7 +201,7 @@ def assess(report, metrics):
 def render(report, model_note):
     lines = ["**Corrélation de l'incident**", f"Ressource : {report['namespace']}/{report['pod']} ; "
              f"fenêtre {report['start']} → {report['end']} ({report['timezone']}).",
-             f"Conclusion : {report['conclusion']}.", "", "**Observations et preuves**"]
+             f"Conclusion : {report['conclusion']}.", "", "**Faits observés — preuves**"]
     lines += [f"- {e['timestamp']} · {e['source']} · {e['resource']} · {e['observation']} "
               f"[preuve : {e['reference']}]" for e in report["timeline"][:20]] or ["- Aucune observation datée."]
     lines += ["", "**Hypothèses**"]
@@ -228,8 +228,15 @@ async def correlate(service, chat):
     report, _, metrics, _ = await collect(service, window, include_correlation=True)
     report = assess(report, metrics)
     provider_name = service.llm.provider_name
-    model_note = f"{provider_name} indisponible ; explication déterministe conservée."
-    if service.sensitive_values() and report["hypotheses"]:
+    sensitive_values = service.sensitive_values()
+    can_call = bool(sensitive_values) or service.llm.settings.llm_provider == "local"
+    if not report["hypotheses"]:
+        model_note = f"{provider_name} non sollicité : aucune hypothèse calculée à prioriser ; diagnostic déterministe conservé."
+    elif not can_call:
+        model_note = f"{provider_name} non sollicité : clé non configurée ; diagnostic déterministe conservé."
+    else:
+        model_note = f"{provider_name} n'a pas été sollicité ; diagnostic déterministe conservé."
+    if can_call and report["hypotheses"]:
         try:
             candidates = [{"id": h["id"], "description": h["description"],
                            "references": [p["reference"] for p in h["supporting_observations"]]}
@@ -242,8 +249,15 @@ async def correlate(service, chat):
             if priority in {h["id"] for h in report["hypotheses"]}:
                 report["hypotheses"].sort(key=lambda h: h["id"] != priority)
                 model_note = f"{provider_name} a sélectionné la priorité {priority} parmi les hypothèses calculées ; aucun fait supplémentaire n'a été retenu."
-            elif priority != "none":
-                model_note = f"Suggestion {provider_name} non étayée écartée."
-        except (UpstreamError, KeyError, IndexError, TypeError, ValueError):
-            pass
+            elif priority == "none":
+                model_note = f"{provider_name} a répondu ; aucune hypothèse n'a été priorisée. Diagnostic déterministe conservé."
+            else:
+                model_note = f"Réponse de {provider_name} rejetée : priorité absente des hypothèses étayées."
+        except UpstreamError as error:
+            if "Réponse JSON" in error.message:
+                model_note = f"Réponse API de {provider_name} rejetée : format de réponse invalide. Diagnostic déterministe conservé."
+            else:
+                model_note = f"Appel à {provider_name} échoué ({error.message}) ; diagnostic déterministe conservé."
+        except (KeyError, IndexError, TypeError, ValueError):
+            model_note = f"Réponse de {provider_name} rejetée : format ou priorité invalide. Diagnostic déterministe conservé."
     return render(report, model_note), report
