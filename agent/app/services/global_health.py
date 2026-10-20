@@ -10,6 +10,7 @@ from app.clients.prometheus_client import ClusterUsage
 from app.services.privacy import redact_data
 
 WARNING_WINDOW = timedelta(minutes=15)
+RECENT_RESTART_REASONS = {"backoff", "crashloopbackoff"}
 
 
 def cluster_health_question(chat: ChatRequest) -> bool:
@@ -175,10 +176,16 @@ def model_focus(report: dict, content: str) -> str | None:
         focus = json.loads(content)["focus"]
     except (ValueError, KeyError, TypeError):
         return None
+    restarting_targets = {(item["namespace"], item["pod"]) for item in report["restarting"]}
+    recent_restart_evidence = any(
+        (event["namespace"], event["name"]) in restarting_targets
+        and (event["reason"] or "").casefold() in RECENT_RESTART_REASONS
+        for event in report["recent_warnings"]
+    )
     available = {
         "nodes": bool(report["nodes"]["affected"]),
         "pods": bool(report["pods"]["affected"]),
-        "restarts": any(item["count"] >= RESTART_THRESHOLD for item in report["restarting"]),
+        "restarts": recent_restart_evidence,
         "events": bool(report["recent_warnings"]),
         "availability": report["state"] == "indéterminé",
         "none": report["state"] == "sain selon les contrôles effectués",

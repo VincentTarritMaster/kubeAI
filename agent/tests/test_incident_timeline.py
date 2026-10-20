@@ -108,12 +108,13 @@ def client(*, events=None, pods=None, key="", kube_code=200, mimir_code=200, lok
         assert "simulation only: exit code 42" not in request.content.decode()
         return httpx.Response(llm_code, json={"choices": [{"message": {"content": llm_text}}]})
 
-    app = create_app(Settings(ca_file="", token_file="", llm_api_key_file="", llm_api_key=key),
+    app = create_app(Settings(ca_file="", token_file="", llm_api_key_file="", llm_api_key=key,
+                              api_key="unit-api-key-0123456789abcdef0123456789"),
                      kubernetes_transport=httpx.MockTransport(kubernetes),
                      prometheus_transport=httpx.MockTransport(mimir),
                      loki_transport=httpx.MockTransport(loki),
                      llm_transport=httpx.MockTransport(llm))
-    return TestClient(app), calls
+    return TestClient(app, headers={"Authorization": "Bearer unit-api-key-0123456789abcdef0123456789"}), calls
 
 
 def ask(api, question=QUESTION, stream=False):

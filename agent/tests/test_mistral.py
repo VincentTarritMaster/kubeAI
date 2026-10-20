@@ -12,6 +12,8 @@ from app.main import create_app
 from app.services.privacy import redact_data, redact_text
 from test_api import pod, sample
 
+TEST_API_KEY = "unit-api-key-0123456789abcdef0123456789"
+
 
 def make_client(llm_handler, *, key="unit-secret-123456", kube_code=200, mimir_code=200,
                 loki_code=200, log_message="application ready"):
@@ -42,14 +44,15 @@ def make_client(llm_handler, *, key="unit-secret-123456", kube_code=200, mimir_c
             assert json.loads(request.content)["model"] == "mistral-small-2603"
         return llm_handler(request)
 
-    settings = Settings(ca_file="", token_file="", llm_api_key=key, llm_api_key_file="")
+    settings = Settings(ca_file="", token_file="", llm_api_key=key, llm_api_key_file="",
+                        api_key=TEST_API_KEY)
     client = TestClient(create_app(
         settings,
         kubernetes_transport=httpx.MockTransport(kube),
         prometheus_transport=httpx.MockTransport(mimir),
         loki_transport=httpx.MockTransport(loki),
         llm_transport=httpx.MockTransport(llm),
-    ))
+    ), headers={"Authorization": "Bearer " + TEST_API_KEY})
     return client, calls
 
 
@@ -228,12 +231,13 @@ def test_local_profile_keeps_same_openwebui_model_and_needs_no_mistral_key():
         return sse_response(["Apertus local répond\n"]) if payload.get("stream") else completion_response()
 
     settings = Settings(ca_file="", token_file="", llm_provider="local", llm_base_url="http://127.0.0.1:11435/v1",
-                        llm_model="apertus-8b", llm_api_key_file="")
+                        llm_model="apertus-8b", llm_api_key_file="", api_key=TEST_API_KEY)
     client = TestClient(create_app(settings,
                                    kubernetes_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"items": [pod()]})),
                                    prometheus_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
                                    loki_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
-                                   llm_transport=httpx.MockTransport(local_handler)))
+                                   llm_transport=httpx.MockTransport(local_handler)),
+                       headers={"Authorization": "Bearer " + TEST_API_KEY})
     with client:
         listed = client.get("/v1/models").json()["data"]
         assert {item["id"] for item in listed} == {"kubeai", "kubeai-apertus"}
@@ -261,12 +265,13 @@ def test_local_profile_failure_is_explicit_and_does_not_expose_upstream_details(
 
     settings = Settings(ca_file="", token_file="", llm_provider="local",
                         llm_base_url="http://127.0.0.1:11435/v1", llm_model="apertus-8b",
-                        llm_api_key_file="")
+                        llm_api_key_file="", api_key=TEST_API_KEY)
     client = TestClient(create_app(settings,
                                    kubernetes_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"items": [pod()]})),
                                    prometheus_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
                                    loki_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
-                                   llm_transport=httpx.MockTransport(local_failure)))
+                                   llm_transport=httpx.MockTransport(local_failure)),
+                       headers={"Authorization": "Bearer " + TEST_API_KEY})
     with client:
         status = client.get("/llm/status")
         assert status.status_code == 503
@@ -399,6 +404,35 @@ def test_sse_connection_break_is_signalled_without_secret():
     assert "unit-secret-123456" not in result.text
 
 
+class UnexpectedStreamFailure(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b'data: {"choices":[{"delta":{"content":"Debut\\n"},"finish_reason":null}]}\n\n'
+        raise RuntimeError("internal detail must not reach Open WebUI")
+
+
+def test_unexpected_sse_failure_sends_terminal_error_frame():
+    client, _ = make_client(lambda _request: httpx.Response(200, stream=UnexpectedStreamFailure()))
+    with client:
+        response = client.post("/v1/chat/completions", json=chat_body(stream=True))
+    frames = events(response)
+    assert response.status_code == 200
+    assert "error" in frames[-2]
+    assert frames[-1] == "[DONE]"
+    assert "internal detail" not in response.text
+
+
+def test_stream_provider_timeout_returns_bounded_http_error_before_sse():
+    def timeout(_request):
+        raise httpx.ReadTimeout("simulated provider timeout")
+
+    client, _ = make_client(timeout)
+    with client:
+        response = client.post("/v1/chat/completions", json=chat_body(stream=True))
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert "Délai de réponse" in response.json()["detail"]["message"]
+
+
 def test_partial_monitoring_still_states_missing_evidence():
     client, calls = make_client(lambda request: completion_response(), mimir_code=503, loki_code=503)
     with client:
@@ -461,3 +495,22 @@ def test_redaction_preserves_evidence_timestamps_and_does_not_mutate():
     assert "abc123" not in cleaned["log"]
     assert redact_text("Bearer abcDEF123") == "Bearer [MASQUÉ]"
     assert "token-secret" not in redact_text('{"accessToken":"token-secret"}')
+
+
+def test_openai_compatible_routes_require_bearer_auth_without_provider_calls():
+    client, calls = make_client(lambda _request: pytest.fail("models endpoint must not call Mistral"))
+    with client:
+        assert client.get("/v1/models", headers={"Authorization": ""}).status_code == 401
+        assert client.get("/v1/models", headers={"Authorization": "Bearer invalid"}).status_code == 401
+        allowed = client.get("/v1/models", headers={"Authorization": "Bearer " + TEST_API_KEY})
+        assert allowed.status_code == 200
+        assert allowed.json()["data"][0]["id"] == "kubeai"
+    assert calls == []
+
+
+def test_openai_routes_fail_closed_when_api_key_is_not_configured():
+    client = TestClient(create_app(Settings(ca_file="", token_file="", api_key="")))
+    with client:
+        response = client.get("/v1/models", headers={"Authorization": "Bearer any-token"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Authentification API non configurée"

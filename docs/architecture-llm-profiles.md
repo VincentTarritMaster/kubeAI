@@ -137,11 +137,12 @@ voie peut nécessiter Kubernetes, Mimir et Loki. `GET /llm/status` reste un appe
 réel distinct à `GET /v1/models`.
 
 ```powershell
-$models = Invoke-RestMethod http://127.0.0.1:8000/v1/models
+$headers = @{ Authorization = "Bearer $env:KUBEAI_API_KEY" }
+$models = Invoke-RestMethod http://127.0.0.1:8000/v1/models -Headers $headers
 $models.data | Select-Object id,name
-Invoke-RestMethod http://127.0.0.1:8000/llm/status
+Invoke-RestMethod http://127.0.0.1:8000/llm/status -Headers $headers
 $body = @{ model='kubeai'; messages=@(@{role='user';content='Scénario synthétique : un pod de test est signalé Failed. Quelles observations confirmerais-tu avant de proposer une cause ?'}) } | ConvertTo-Json -Depth 5
-Invoke-RestMethod http://127.0.0.1:8000/v1/chat/completions -Method Post -ContentType 'application/json' -Body $body
+Invoke-RestMethod http://127.0.0.1:8000/v1/chat/completions -Method Post -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
 Pour vérifier le streaming après cette première réponse, construire une requête
@@ -149,7 +150,7 @@ Pour vérifier le streaming après cette première réponse, construire une requ
 
 ```powershell
 $streamBody = @{ model='kubeai'; stream=$true; messages=@(@{role='user';content='Scénario synthétique : un pod de test est signalé Failed. Quelles observations confirmerais-tu avant de proposer une cause ?'}) } | ConvertTo-Json -Depth 5 -Compress
-curl.exe -N http://127.0.0.1:8000/v1/chat/completions -H 'Content-Type: application/json' --data-binary $streamBody
+curl.exe -N http://127.0.0.1:8000/v1/chat/completions -H "Authorization: Bearer $env:KUBEAI_API_KEY" -H 'Content-Type: application/json' --data-binary $streamBody
 ```
 
 Arrêter Uvicorn avec `Ctrl+C` dans le PowerShell A, puis effacer la variable
@@ -184,7 +185,8 @@ kubectl --context minikube -n kubeai edit configmap kubeai-agent-config
 kubectl --context minikube -n kubeai rollout restart deployment/kubeai-agent
 kubectl --context minikube -n kubeai rollout status deployment/kubeai-agent
 kubectl --context minikube -n kubeai port-forward service/kubeai-agent 8000:8000
-Invoke-RestMethod http://127.0.0.1:8000/v1/models
+$headers = @{ Authorization = "Bearer $env:KUBEAI_API_KEY" }
+Invoke-RestMethod http://127.0.0.1:8000/v1/models -Headers $headers
 ```
 
 Pour activer le local dans cette ConfigMap, régler `LLM_PROVIDER=local`,

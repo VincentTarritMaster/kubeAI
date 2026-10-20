@@ -126,6 +126,7 @@ sur Minikube. `.env.example` documente les variables mais n'est pas chargé.
 | `KUBERNETES_CA_FILE` | Certificat CA projeté du cluster |
 | `KUBERNETES_KUBECONFIG_FILE` | `KUBECONFIG` ou `~/.kube/config`, en mode `kubeconfig` |
 | `KUBERNETES_CONTEXT` | Contexte requis explicitement en mode `kubeconfig` |
+| `KUBEAI_API_KEY` | Clé Bearer obligatoire pour l'API OpenAI compatible |
 | `UPSTREAM_TIMEOUT_SECONDS` | `5` |
 | `METRICS_MAX_AGE_SECONDS` | `60` |
 | `LOKI_URL` | `http://loki.monitoring.svc.cluster.local:3100` |
@@ -145,10 +146,11 @@ L'agent dispose uniquement du droit `list` sur `nodes`, `pods` et `events` à
 l'échelle du cluster. Il n'a aucun accès aux Secrets via l'API, aux logs via
 Kubernetes, au proxy kubelet, à `exec` ou aux verbes de modification.
 Les logs sont lus dans Loki et la clé Mistral est montée comme fichier Secret.
-Le Service reste interne au cluster, sans authentification applicative, pour
-ce profil local de développement. Ne pas exposer la nouvelle route hors d'un
-environnement maîtrisé : les métadonnées et messages d'événements peuvent être
-sensibles malgré le masquage au mieux.
+Le Service reste interne au cluster. Les routes `/v1/*` et `/diagnose`
+exigent `Authorization: Bearer <KUBEAI_API_KEY>` ; la clé est fournie au
+déploiement par le Secret Kubernetes `kubeai-api-auth` (clé `api-key`) et ne
+doit pas être enregistrée dans Git. Les endpoints de santé restent sans
+authentification pour les probes Kubernetes.
 
 ## Développement hors du cluster
 

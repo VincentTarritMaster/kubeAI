@@ -9,6 +9,8 @@ from app.main import create_app
 from app.services.source_notes import SourceNoteFilter
 from test_api import pod, sample
 
+TEST_API_KEY = "unit-api-key-0123456789abcdef0123456789"
+
 
 class ChatTests(unittest.TestCase):
     def client(self, *, kube_code=200, prom_code=200, loki_code=200, llm_code=200,
@@ -72,10 +74,10 @@ class ChatTests(unittest.TestCase):
         return TestClient(create_app(
             Settings(ca_file="", token_file="", llm_provider="apertus",
                      llm_base_url="http://host.minikube.internal:11435/v1", llm_model="apertus-8b",
-                     llm_api_key_file=key_file, llm_timeout=180),
+                     llm_api_key_file=key_file, llm_timeout=180, api_key=TEST_API_KEY),
             kubernetes_transport=httpx.MockTransport(kube), prometheus_transport=httpx.MockTransport(prom),
             loki_transport=httpx.MockTransport(loki), llm_transport=httpx.MockTransport(llm),
-        ))
+        ), headers={"Authorization": "Bearer " + TEST_API_KEY})
 
     def body(self, **extra):
         return {"model": "kubeai-apertus", "messages": [{"role": "user", "content": "Explain the latest observations."}], **extra}

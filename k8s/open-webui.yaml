@@ -37,10 +37,12 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 6
           env:
+            - name: WEBUI_NAME
+              value: "P5-G17 | KubeAI"
             - name: WEBUI_AUTH
               value: "True"
             - name: ENABLE_SIGNUP
-              value: "True"
+              value: "False"
             - name: DEFAULT_USER_ROLE
               value: pending
             - name: ENABLE_OPENAI_API
@@ -50,7 +52,10 @@ spec:
             - name: OPENAI_API_BASE_URL
               value: http://kubeai-agent.kubeai.svc.cluster.local:8000/v1
             - name: OPENAI_API_KEY
-              value: kubeai-local
+              valueFrom:
+                secretKeyRef:
+                  name: kubeai-api-auth
+                  key: api-key
             - name: DEFAULT_MODELS
               value: kubeai
             - name: ENABLE_PERSISTENT_CONFIG

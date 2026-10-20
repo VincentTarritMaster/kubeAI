@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import json
 import re
+import unicodedata
 
 from app.clients.base import UpstreamError
 from app.services.incident_timeline import HELP, collect, parse_window, stamp
@@ -12,7 +13,8 @@ ALIGN_SECONDS = 300
 
 def correlation_question(chat):
     question = next((m.content for m in reversed(chat.messages) if m.role == "user"), "").lower()
-    return any(word in question for word in ("lente", "lenteur", "latence", "corrél", "correl",
+    question = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode()
+    return any(word in question for word in ("lente", "lenteur", "latence", "correl",
                                               "hypothèse", "hypothese", "cause"))
 
 

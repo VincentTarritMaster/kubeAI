@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
     @asynccontextmanager
     async def lifespan(application):
         config = settings or Settings.from_env()
+        application.state.settings = config
         kubernetes_options = build_kubernetes_http_options(config)
         async with (
             httpx.AsyncClient(**kubernetes_options, timeout=config.request_timeout, trust_env=False,

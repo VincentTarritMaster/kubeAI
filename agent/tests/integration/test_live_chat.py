@@ -30,9 +30,10 @@ class LiveChatTests(unittest.TestCase):
     def test_01_diagnosis_with_real_observations(self):
         result = self.remote('''
 import httpx,json
+import os
 with httpx.Client(base_url="http://127.0.0.1:8000",timeout=180) as client:
-    ready=client.get("/llm/status"); ready.raise_for_status()
-    response=client.post("/diagnose",json={"question":"Pour chaque pod, cite exactement son nom et la valeur memory_working_set_mib fournie en Mio, sans conversion. Une ligne par pod."})
+    ready=client.get("/llm/status",headers={"Authorization":"Bearer "+os.environ["KUBEAI_API_KEY"]}); ready.raise_for_status()
+    response=client.post("/diagnose",headers={"Authorization":"Bearer "+os.environ["KUBEAI_API_KEY"]},json={"question":"Pour chaque pod, cite exactement son nom et la valeur memory_working_set_mib fournie en Mio, sans conversion. Une ligne par pod."})
     response.raise_for_status()
     print(json.dumps(response.json()))
 ''')
@@ -47,9 +48,10 @@ with httpx.Client(base_url="http://127.0.0.1:8000",timeout=180) as client:
     def test_02_streaming_from_real_apertus(self):
         result = self.remote('''
 import httpx,json
+import os
 body={"model":"kubeai-apertus","messages":[{"role":"user","content":"Les pods sont-ils prêts ? Réponds en deux phrases."}],"max_tokens":160,"stream":True}
 with httpx.Client(timeout=180) as client:
-    with client.stream("POST","http://127.0.0.1:8000/v1/chat/completions",json=body) as response:
+    with client.stream("POST","http://127.0.0.1:8000/v1/chat/completions",headers={"Authorization":"Bearer "+os.environ["KUBEAI_API_KEY"]},json=body) as response:
         response.raise_for_status()
         events=[line[6:] for line in response.iter_lines() if line.startswith("data: ")]
         chunks=[json.loads(line) for line in events if line!="[DONE]"]
@@ -75,7 +77,8 @@ with httpx.Client(timeout=180) as client:
         question = f"Check the current state of pod {name}. Is it failing? Answer in three sentences using the latest data."
         first = self.remote(f'''
 import httpx,json
-r=httpx.post("http://127.0.0.1:8000/diagnose",json={{"question":{question!r}}},timeout=180)
+import os
+r=httpx.post("http://127.0.0.1:8000/diagnose",headers={{"Authorization":"Bearer "+os.environ["KUBEAI_API_KEY"]}},json={{"question":{question!r}}},timeout=180)
 r.raise_for_status(); print(json.dumps(r.json()))
 ''')
         observed = next(p for p in first["observation"]["pods"] if p["name"] == name)
@@ -92,8 +95,9 @@ r.raise_for_status(); print(json.dumps(r.json()))
             body = {"model": "kubeai-apertus", "messages": history, "stream": streaming, "temperature": 0, "max_tokens": 256}
             result = self.remote(f'''
 import httpx,json
+import os
 body=json.loads({json.dumps(body)!r})
-r=httpx.post("http://127.0.0.1:8000/v1/chat/completions",json=body,timeout=180); r.raise_for_status()
+r=httpx.post("http://127.0.0.1:8000/v1/chat/completions",headers={{"Authorization":"Bearer "+os.environ["KUBEAI_API_KEY"]}},json=body,timeout=180); r.raise_for_status()
 if body["stream"]:
     events=[json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and line!="data: [DONE]"]
     assert not any("error" in event for event in events),events

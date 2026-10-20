@@ -42,6 +42,7 @@ class Settings:
     llm_api_key_file: str = "/var/run/secrets/kubeai-mistral/api-key"
     llm_timeout: float = 60.0
     llm_api_key: str = field(default="", repr=False)
+    api_key: str = field(default="", repr=False)
 
     def __post_init__(self):
         # Keep previously deployed values working while exposing the two
@@ -118,6 +119,7 @@ class Settings:
                               if local else os.getenv("MISTRAL_API_KEY_FILE", cls.llm_api_key_file)),
             llm_timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "180" if local else "60")),
             llm_api_key="" if local else os.getenv("MISTRAL_API_KEY", ""),
+            api_key=os.getenv("KUBEAI_API_KEY", "").strip(),
         )
 
     def token(self):

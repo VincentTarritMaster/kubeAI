@@ -9,7 +9,9 @@ import pytest
 
 from app.clients.kubernetes_client import KubernetesClient
 from app.config import Settings
+from app.models import ChatMessage, ChatRequest
 from app.main import create_app
+from app.api.chat import diagnostic_route
 
 QUESTION = "Quel est l'état de santé de mon cluster ?"
 
@@ -79,12 +81,13 @@ def make_client(*, nodes=None, pods=None, events=None, key="", kube_status=None,
     def no_loki(request):
         pytest.fail("Loki must not be queried for global health demonstration A")
 
-    app = create_app(Settings(ca_file="", token_file="", llm_api_key_file="", llm_api_key=key),
+    app = create_app(Settings(ca_file="", token_file="", llm_api_key_file="", llm_api_key=key,
+                              api_key="unit-api-key-0123456789abcdef0123456789"),
                      kubernetes_transport=httpx.MockTransport(kubernetes),
                      prometheus_transport=httpx.MockTransport(mimir),
                      loki_transport=httpx.MockTransport(no_loki),
                      llm_transport=httpx.MockTransport(llm))
-    return TestClient(app), calls
+    return TestClient(app, headers={"Authorization": "Bearer unit-api-key-0123456789abcdef0123456789"}), calls
 
 
 def chat(api, *, stream=False):
@@ -180,6 +183,35 @@ def test_historical_restarts_plus_recent_warning_degrade_current_health():
     assert "**État global : dégradé**" in text
     assert "9 redémarrage(s) cumulés" in text
     assert "Warning FailedScheduling" in text
+
+
+def test_restart_focus_requires_recent_matching_restart_evidence():
+    historical, _ = make_client(pods=[pod("web", "other", restarts=9)],
+                                llm_text='{"focus":"restarts"}', key="test-key")
+    with historical:
+        old_only = answer(chat(historical))
+    assert "proposition non étayée écartée" in old_only
+    assert "9 redémarrage(s) cumulés" in old_only
+
+    recent, _ = make_client(pods=[pod("web", "other", restarts=9)],
+                            events=[warning(reason="BackOff", name="web", namespace="other")],
+                            llm_text='{"focus":"restarts"}', key="test-key")
+    with recent:
+        backed_by_event = answer(chat(recent))
+    assert "Priorité de lecture sélectionnée avec Mistral" in backed_by_event
+    assert "comparer d'abord les cumuls de redémarrages" in backed_by_event
+
+
+@pytest.mark.parametrize(("question", "expected"), [
+    ("Quel est l'état de santé global du cluster ?", "cluster"),
+    ("Que s'est-il passé lors de cet incident ?", "incident"),
+    ("Corrèle les logs et métriques de cet incident.", "correlation"),
+    ("Corrèle la chronologie de cet incident.", "correlation"),
+    ("Résume les observations disponibles.", "chat"),
+])
+def test_a_b_c_routing_is_explicit_and_global_health_needs_no_dates(question, expected):
+    chat_request = ChatRequest(messages=[ChatMessage(role="user", content=question)])
+    assert diagnostic_route(chat_request) == expected
 
 
 def test_mimir_failure_keeps_kubernetes_diagnosis_with_limits():

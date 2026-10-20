@@ -65,8 +65,11 @@ Le profil par défaut `mistral-api` est joint en HTTPS via `MISTRAL_BASE_URL` ; 
 `MISTRAL_API_KEY_FILE`. Le timeout de génération est de 60 secondes par défaut.
 Le profil `local` utilise `LLM_BASE_URL`, `LLM_MODEL` et accepte une clé locale
 facultative. Les anciens noms `mistral` et `apertus` sont acceptés comme alias.
-La route `/v1/models` publie les identifiants virtuels même sans clé ;
-`/llm/status` contacte réellement le fournisseur configuré.
+Les routes `/v1/models`, `/v1/chat/completions`, `/diagnose` et `/llm/status`
+exigent `Authorization: Bearer <KUBEAI_API_KEY>`. La clé doit être configurée
+dans l'environnement du backend et n'est jamais renvoyée par l'API. `/v1/models`
+publie uniquement les identifiants virtuels ; `/llm/status` contacte réellement
+le fournisseur configuré.
 
 Le backend ne transmet au modèle que la question courante, au plus quatre
 questions antérieures et l'observation compacte. Il n'envoie pas les réponses

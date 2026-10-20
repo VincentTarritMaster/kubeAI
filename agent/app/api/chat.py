@@ -3,11 +3,12 @@ import json
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import httpx
 
 from app.models import ChatMessage, ChatRequest, DiagnosisRequest
+from app.api.auth import require_api_key
 from app.services.diagnosis import CHAT_MODEL, source_note
 from app.services.source_notes import SourceNoteFilter, filter_source_notes
 from app.services.health_answer import health_answer
@@ -16,8 +17,19 @@ from app.services.incident_timeline import incident_question
 from app.services.correlation import correlation_question
 from app.services.privacy import redact_text
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 LEGACY_MODEL = "kubeai-apertus"
+
+
+def diagnostic_route(chat: ChatRequest) -> str:
+    """Use the same explicit A/B/C routing for JSON, SSE, and /diagnose."""
+    if correlation_question(chat):
+        return "correlation"
+    if incident_question(chat):
+        return "incident"
+    if cluster_health_question(chat):
+        return "cluster"
+    return "chat"
 
 
 @router.get("/v1/models", tags=["chat"], operation_id="list_chat_models")
@@ -44,13 +56,14 @@ def completion(content, model=CHAT_MODEL):
 
 
 async def finish_nonstream(service, chat):
-    if correlation_question(chat):
+    route = diagnostic_route(chat)
+    if route == "correlation":
         text, observation = await service.correlation(chat)
         return completion(text, chat.model), observation
-    if incident_question(chat):
+    if route == "incident":
         text, observation = await service.incident(chat)
         return completion(text, chat.model), observation
-    if cluster_health_question(chat):
+    if route == "cluster":
         text, observation = await service.global_health()
         return completion(text, chat.model), observation
     payload, observation = await service.prepare(chat)
@@ -131,9 +144,10 @@ async def chat_completions(body: ChatRequest, request: Request):
         answer, _ = await finish_nonstream(service, body)
         return answer
 
-    if correlation_question(body) or incident_question(body) or cluster_health_question(body):
-        answer, _ = (await service.correlation(body) if correlation_question(body) else
-                     await service.incident(body) if incident_question(body) else
+    route = diagnostic_route(body)
+    if route != "chat":
+        answer, _ = (await service.correlation(body) if route == "correlation" else
+                     await service.incident(body) if route == "incident" else
                      await service.global_health())
         common = {"id": "chatcmpl-" + uuid.uuid4().hex, "object": "chat.completion.chunk",
                   "created": int(time.time()), "model": body.model}
@@ -221,6 +235,11 @@ async def chat_completions(body: ChatRequest, request: Request):
             yield "data: [DONE]\n\n"
         except (httpx.HTTPError, ValueError, KeyError, TypeError, UnicodeError):
             yield _error_event("Flux du fournisseur interrompu ou invalide")
+            yield "data: [DONE]\n\n"
+        except Exception:
+            # Once SSE headers are sent, surface a terminal frame instead of
+            # leaving Open WebUI waiting on a server-side exception.
+            yield _error_event("Diagnostic interrompu par une erreur interne")
             yield "data: [DONE]\n\n"
         finally:
             await upstream.aclose()

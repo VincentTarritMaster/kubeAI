@@ -210,11 +210,12 @@ def make_client(*, kube_code=200, mimir_code=200, loki_code=200, key="", llm_cod
         assert "KUBEAI_DEMO_CPU_LOAD" not in request.content.decode()
         return httpx.Response(llm_code, json={"choices": [{"message": {"content": llm_text}}]})
 
-    app = create_app(Settings(ca_file="", token_file="", llm_api_key_file="", llm_api_key=key),
+    app = create_app(Settings(ca_file="", token_file="", llm_api_key_file="", llm_api_key=key,
+                              api_key="unit-api-key-0123456789abcdef0123456789"),
                      kubernetes_transport=httpx.MockTransport(kube),
                      prometheus_transport=httpx.MockTransport(mimir),
                      loki_transport=httpx.MockTransport(loki), llm_transport=httpx.MockTransport(llm))
-    return TestClient(app), calls
+    return TestClient(app, headers={"Authorization": "Bearer unit-api-key-0123456789abcdef0123456789"}), calls
 
 
 def ask(api, question=QUESTION, *, stream=False):
@@ -320,7 +321,7 @@ def test_incident_demo_exposes_annotated_metrics_and_has_bounded_resources():
     assert 'log_phase("recovered")' in app
     assert "server.shutdown()" in app
     assert "automountServiceAccountToken: false" in pod_manifest
-    assert "activeDeadlineSeconds: 300" in pod_manifest
+    assert "activeDeadlineSeconds: 600" in pod_manifest
     assert "memory: 64Mi" in pod_manifest and "cpu: 100m" in pod_manifest
     assert "nodes/proxy" not in pod_manifest
 

@@ -23,6 +23,8 @@ import test_correlation as demo_c
 import test_demo_cluster_health as demo_a
 import test_incident_timeline as demo_b
 
+TEST_API_KEY = "unit-api-key-0123456789abcdef0123456789"
+
 
 @contextmanager
 def local_server(app):
@@ -44,7 +46,8 @@ def local_server(app):
         listener.close()
         raise RuntimeError("Uvicorn failed to start on the loopback listener")
     try:
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10, trust_env=False) as client:
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10, trust_env=False,
+                          headers={"Authorization": "Bearer " + TEST_API_KEY}) as client:
             yield client
     finally:
         server.should_exit = True
