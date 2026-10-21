@@ -8,6 +8,7 @@ import unicodedata
 from app.models import ChatRequest, ClusterInventory
 from app.clients.prometheus_client import ClusterUsage
 from app.services.privacy import redact_data
+from app.services.presentation import DEFAULT_ZONE, full_time, technical_details
 
 WARNING_WINDOW = timedelta(minutes=15)
 RECENT_RESTART_REASONS = {"backoff", "crashloopbackoff"}
@@ -120,18 +121,17 @@ def assess(inventory: ClusterInventory, usage: ClusterUsage | None, mimir_error:
     return redact_data(report)
 
 
-def render(report: dict, *, ai_note: str) -> str:
+def render(report: dict, *, ai_note: str, zone: str = DEFAULT_ZONE) -> str:
     nodes, pods, metrics = report["nodes"], report["pods"], report["metrics"]
-    lines = [f"**État global : {report['state']}**", ""]
+    lines = ["## Santé du cluster", "",
+             f"**État global : {report['state']}** — relevé du {full_time(report['observed_at'], zone)}.", ""]
     lines.append("- Nœuds : données indisponibles." if nodes["total"] is None else
                  f"- Nœuds : {nodes['ready']} Ready, {nodes['not_ready']} NotReady sur {nodes['total']} observés.")
     lines.append("- Pods : données indisponibles." if pods["total"] is None else
                  f"- Pods : {pods['running']} Running, {pods['unhealthy']} en erreur sur {pods['total']} observés, tous namespaces confondus.")
     restarting = report["restarting"]
-    lines.append(f"- Redémarrages : {report['restarting_total']} conteneur(s) avec un cumul non nul."
+    lines.append(f"- Redémarrages cumulés : {report['restarting_total']} conteneur(s) avec un compteur non nul."
                  if restarting else "- Redémarrages : aucun cumul non nul observé dans les données disponibles.")
-    if restarting:
-        lines.append("- Contexte des redémarrages : compteurs cumulés sans horodatage ; ils ne suffisent pas à établir un incident récent.")
     if metrics["cpu_cores"] is None and metrics["memory_working_set_bytes"] is None:
         lines.append("- Métriques : CPU et mémoire indisponibles dans Mimir.")
     else:
@@ -140,33 +140,44 @@ def render(report: dict, *, ai_note: str) -> str:
             parts.append(f"CPU des conteneurs observés {metrics['cpu_cores']:.3f} cœur(s)")
         if metrics["memory_working_set_bytes"] is not None:
             parts.append(f"mémoire working set {metrics['memory_working_set_bytes'] / 1048576:.1f} Mio")
-        lines.append("- Métriques Mimir : " + ", ".join(parts) + ". Aucune conclusion de saturation sans capacité ni seuil validé.")
+        lines.append("- Métriques Mimir : " + ", ".join(parts) + ".")
     lines.append(f"- Événements : {report['recent_warnings_total']} avertissement(s) daté(s) dans les 15 dernières minutes."
                  if report["sources"]["events"] != "unavailable" else "- Événements : source indisponible.")
-    lines += ["", "**Diagnostic :** " + {
+    lines += ["", "**Conclusion :** " + {
         "critique": "aucun nœud observé n'est Ready ; la disponibilité du cluster exige une vérification immédiate.",
         "dégradé": "des anomalies observées affectent au moins un nœud, pod, conteneur ou événement récent.",
         "indéterminé": "les données essentielles ne permettent pas de conclure sur la santé globale.",
         "sain selon les contrôles effectués": "aucune anomalie n'est visible dans les contrôles disponibles ; cela ne prouve pas la santé de chaque application.",
-    }[report["state"]], "", "**Preuves :**"]
-    lines.append(f"- Relevé à {report['observed_at']} ; sources : " +
-                 ", ".join(f"{name}={state}" for name, state in report["sources"].items()) + ".")
+    }[report["state"]]]
+    if nodes["affected"] or pods["affected"] or report["recent_warnings"]:
+        lines += ["", "**Anomalies principales :**"]
     for name in nodes["affected"]:
         lines.append(f"- Nœud `{name}` : NotReady [Kubernetes].")
-    for item in pods["affected"]:
+    for item in pods["affected"][:5]:
         lines.append(f"- Pod `{item['namespace']}/{item['name']}` : {item['phase']}, {item['reason']} [Kubernetes].")
-    for item in restarting:
-        lines.append(f"- `{item['namespace']}/{item['pod']}/{item['container']}` : {item['count']} redémarrage(s) cumulés [Kubernetes].")
-    for item in report["recent_warnings"]:
+    for item in report["recent_warnings"][:3]:
         target = "/".join(part for part in (item["namespace"], item["kind"], item["name"]) if part)
-        lines.append(f"- {item['at']} : Warning {item['reason'] or 'sans motif'}, {target or 'objet non précisé'} [Kubernetes Events].")
-    if not (nodes["affected"] or pods["affected"] or restarting or report["recent_warnings"]):
-        lines.append("- Aucun signal d'anomalie dans les ressources accessibles à ce relevé.")
-    lines += ["", "**Limites :** " + "; ".join(report["limits"]) + ".",
-              "", "**Vérifications proposées :** comparer ce relevé avec `kubectl get nodes`, "
-              "`kubectl get pods -A` et `kubectl get events -A` sur un cluster autorisé, "
-              "puis consulter les métriques Mimir sans modifier les ressources.",
-              "", ai_note]
+        lines.append(f"- {full_time(item['at'], zone)} : {item['reason'] or 'avertissement'} "
+                     f"sur {target or 'une ressource non précisée'} [Kubernetes Events].")
+    if restarting:
+        lines += ["", "Les redémarrages sont des compteurs cumulés sans horodatage ; ils ne suffisent pas à établir un incident récent."]
+    lines += ["", "Aucune saturation CPU ou mémoire n'est conclue sans limite et seuil vérifiés."]
+    if ai_note.startswith("**Priorité"):
+        lines += ["", ai_note]
+    technical = [f"Relevé UTC : {report['observed_at']}",
+                 "Sources : " + ", ".join(f"{name}={state}" for name, state in report["sources"].items()),
+                 f"Redémarrages : {report['restart_context']}"]
+    technical += [f"Nœud NotReady : {name} [Kubernetes]" for name in nodes["affected"]]
+    technical += [f"Pod : {item['namespace']}/{item['name']} | {item['phase']} | {item['reason']} [Kubernetes]"
+                  for item in pods["affected"]]
+    technical += [f"{item['namespace']}/{item['pod']}/{item['container']} : {item['count']} redémarrage(s) cumulés [Kubernetes]"
+                  for item in restarting]
+    technical += [f"{item['at']} | Warning {item['reason'] or 'sans motif'} | "
+                  f"{item['namespace']}/{item['kind']}/{item['name']} [Kubernetes Events]"
+                  for item in report["recent_warnings"]]
+    technical += ["Limite : " + limit for limit in report["limits"]]
+    technical.append(ai_note)
+    lines += ["", technical_details(technical)]
     return "\n".join(lines)
 
 

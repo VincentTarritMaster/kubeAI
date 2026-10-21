@@ -9,6 +9,7 @@ from app.services.privacy import redact_data, redact_text
 from app.services.global_health import assess, focus_note, model_focus, render
 from app.services.incident_timeline import investigate
 from app.services.correlation import correlate
+from app.services.presentation import DEFAULT_ZONE, full_time, technical_details
 
 PROMPT = (Path(__file__).resolve().parents[1] / "prompts/system_prompt.txt").read_text(encoding="utf-8")
 CHAT_MODEL = "kubeai"
@@ -55,19 +56,20 @@ class DiagnosisService:
                 "N'ajoute aucun fait, texte libre, cause ou commande."
             )
             try:
-                response = await self.llm.complete({
-                    "messages": [{"role": "system", "content": prompt},
-                                 {"role": "user", "content": json.dumps(report, ensure_ascii=False)}],
-                    "temperature": 0, "max_tokens": 32,
-                })
-                focus = model_focus(report, response["choices"][0]["message"]["content"])
+                selected = await self.llm.select_option(
+                    prompt=prompt, data=report, key="focus",
+                    options=("nodes", "pods", "restarts", "events", "availability", "none"))
+                focus = model_focus(report, json.dumps({"focus": selected}))
                 if focus:
                     ai_note = focus_note(focus, self.llm.provider_name)
                 else:
                     ai_note = "**Analyse IA avancée :** proposition non étayée écartée ; le bilan reste déterministe."
-            except (UpstreamError, KeyError, IndexError, TypeError, ValueError):
+            except UpstreamError as error:
+                if "Sélection structurée" in error.message:
+                    ai_note = "**Analyse IA avancée :** proposition non étayée écartée ; le bilan reste déterministe."
+            except (KeyError, IndexError, TypeError, ValueError):
                 pass
-        return render(report, ai_note=ai_note), report
+        return render(report, ai_note=ai_note, zone=self.llm.settings.display_timezone), report
 
     async def observation(self):
         snapshot = await self.cluster_status.status()
@@ -146,11 +148,11 @@ class DiagnosisService:
         }, context
 
 
-def source_note(context):
+def source_note(context, *, zone=DEFAULT_ZONE):
     sources = [name + (" (partielle)" if item["status"] == "partial" else "")
                for name, item in context["sources"].items() if item["status"] != "unavailable"]
     note = ("\n\n---\nSources disponibles pour le namespace `" + context["namespace"] +
-            "` ; relevé à " + context["observed_at"] + " : " + ", ".join(sources) + ".")
+            "` ; relevé le " + full_time(context["observed_at"], zone) + " : " + ", ".join(sources) + ".")
     if context["warnings"]:
         unavailable = [name for name, item in context["sources"].items() if item["status"] == "unavailable"]
         note += "\nDonnées partielles : " + (
@@ -160,4 +162,5 @@ def source_note(context):
         note += "\nLa liste des avertissements transmise au modèle est limitée à huit éléments."
     if context["truncated"]:
         note += "\nLe modèle a reçu au plus 20 pods, en priorité ceux en défaut."
+    note += "\n" + technical_details([f"Relevé UTC : {context['observed_at']}"])
     return note

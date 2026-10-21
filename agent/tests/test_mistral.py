@@ -9,10 +9,16 @@ import pytest
 import app.config as config_module
 from app.config import Settings
 from app.main import create_app
+from app.services.llm_service import LLMService
 from app.services.privacy import redact_data, redact_text
 from test_api import pod, sample
 
 TEST_API_KEY = "unit-api-key-0123456789abcdef0123456789"
+
+
+def test_other_local_model_uses_generic_provider_name():
+    settings = Settings(llm_provider="local", llm_model="my-ollama-model")
+    assert LLMService(None, settings).provider_name == "LLM local"
 
 
 def make_client(llm_handler, *, key="unit-secret-123456", kube_code=200, mimir_code=200,
@@ -198,6 +204,30 @@ def test_json_mistral_and_openwebui_model_contract():
         assert "Réponds en français" in payload["messages"][0]["content"]
         assert payload["messages"][1]["role"] == "user"
         assert len(payload["messages"]) == 2
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_mistral_long_webui_history_keeps_current_question_and_system_prompt(stream):
+    def handler(request):
+        return sse_response(["Réponse actuelle.\n"]) if stream else completion_response()
+
+    client, calls = make_client(handler)
+    body = chat_body(stream=stream)
+    body["messages"] = [
+        {"role": "user", "content": "Question précédente."},
+        {"role": "assistant", "content": "Ancien diagnostic." * 1300},
+        {"role": "user", "content": "Explique les observations actuelles."},
+    ]
+    with client:
+        response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 200
+    if stream:
+        assert events(response)[-1] == "[DONE]"
+    payload = json.loads(calls[0].content)
+    assert "Réponds en français" in payload["messages"][0]["content"]
+    assert "Question précédente." in payload["messages"][-1]["content"]
+    assert payload["messages"][-1]["content"].endswith("Explique les observations actuelles.")
+    assert "Ancien diagnostic." not in payload["messages"][-1]["content"]
 
 
 def test_provider_status_uses_mocked_models_endpoint():
@@ -468,7 +498,7 @@ def test_detectable_secrets_in_observations_and_question_are_masked():
                             log_message=f"Bearer abcDEF123, password=guess, {key}, alice@example.org, 10.2.3.4")
     with client:
         response = client.post("/v1/chat/completions", json={"model": "kubeai", "messages": [
-            {"role": "user", "content": "Explique cette clé " + key},
+            {"role": "user", "content": "Explique cette clé dans les logs Kubernetes : " + key},
         ]})
     assert response.status_code == 200
     payload_text = json.dumps(seen[0], ensure_ascii=False)

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 _DEVELOPMENT_DOTENV_PATH = Path(__file__).resolve().parents[2] / ".env"
@@ -41,6 +42,7 @@ class Settings:
     llm_model: str = "mistral-small-2603"
     llm_api_key_file: str = "/var/run/secrets/kubeai-mistral/api-key"
     llm_timeout: float = 60.0
+    display_timezone: str = "Europe/Zurich"
     llm_api_key: str = field(default="", repr=False)
     api_key: str = field(default="", repr=False)
 
@@ -73,6 +75,10 @@ class Settings:
             raise ValueError("METRICS_MAX_AGE_SECONDS doit être compris entre 15 et 300")
         if not 1 <= self.llm_timeout <= 600:
             raise ValueError("LLM_TIMEOUT_SECONDS doit être compris entre 1 et 600")
+        try:
+            ZoneInfo(self.display_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError("KUBEAI_DISPLAY_TIMEZONE doit être un fuseau IANA valide") from error
         if self.llm_provider not in {"mistral-api", "local"}:
             raise ValueError("LLM_PROVIDER doit être mistral-api ou local")
         if self.llm_provider == "mistral-api":
@@ -118,6 +124,7 @@ class Settings:
             llm_api_key_file=(os.getenv("LLM_API_KEY_FILE", "")
                               if local else os.getenv("MISTRAL_API_KEY_FILE", cls.llm_api_key_file)),
             llm_timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "180" if local else "60")),
+            display_timezone=os.getenv("KUBEAI_DISPLAY_TIMEZONE", cls.display_timezone).strip(),
             llm_api_key="" if local else os.getenv("MISTRAL_API_KEY", ""),
             api_key=os.getenv("KUBEAI_API_KEY", "").strip(),
         )

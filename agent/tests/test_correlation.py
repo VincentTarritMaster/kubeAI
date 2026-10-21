@@ -245,7 +245,7 @@ def test_json_sse_diagnose_and_no_paid_call_without_key():
         diagnosed = api.post("/diagnose", json={"question": QUESTION})
     assert "demo_cpu_activity" in text and "demo_cpu_activity" in streamed
     assert "Mistral API non sollicité" in text
-    assert "indisponible" not in text
+    assert "Mistral API indisponible" not in text
     assert diagnosed.json()["observation"]["scope"] == "correlation"
     assert diagnosed.json()["observation"]["hypotheses"][0]["id"] == "demo_cpu_activity"
     assert len(calls["mimir"]) == 18 and len(calls["loki"]) == 3 and calls["llm"] == []
@@ -304,7 +304,7 @@ def test_mistral_valid_none_answer_is_not_reported_as_unavailable():
     with api:
         text = answer(ask(api))
     assert "Mistral API a répondu ; aucune hypothèse n'a été priorisée" in text
-    assert "indisponible" not in text
+    assert "Mistral API indisponible" not in text
     assert len(calls["llm"]) == 1
 
 

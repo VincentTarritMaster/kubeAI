@@ -1,8 +1,92 @@
 # P5-G17 | KubeAI
 
-Projet collectif de Kevin, Vincent et Anass : un assistant d'observabilité
+Projet collectif des quatre étudiants du groupe P5-G17 : un assistant d'observabilité
 Kubernetes qui répond à des questions de santé et d'incident à partir de
 preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`.
+
+## Pour les collègues qui ont déjà cloné le projet
+
+Depuis la racine du dépôt, mettre sa branche à jour avec `main` (committer ou
+mettre de côté ses changements locaux avant le merge) :
+
+```powershell
+git fetch origin
+git switch nom-de-votre-branche
+git merge origin/main
+```
+
+Si vous travaillez directement sur `main`, utilisez plutôt `git switch main`
+puis `git pull --ff-only origin main`. Ensuite, dans le même terminal :
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad .env
+.\scripts\stop.ps1
+.\scripts\start.ps1
+```
+
+Dans `.env`, garder `LLM_PROVIDER=mistral-api` et remplacer
+`MISTRAL_API_KEY=REMPLACER_PAR_SA_CLE` par **sa propre clé**. Ne pas committer
+`.env`. Quand le démarrage affiche « KubeAI est prêt », ouvrir
+<http://127.0.0.1:8080>, se connecter à Open WebUI et choisir le modèle `kubeai`.
+Au premier accès, créer son compte Open WebUI.
+
+## Installation et démarrage rapide — Windows / Docker Desktop
+
+1. **Mettre à jour sa branche sans perdre son travail.** Vérifier `git status`.
+   Si des fichiers sont modifiés, les committer sur sa branche ou les mettre
+   temporairement à l'abri avec `git stash push -u`. Puis :
+
+   ```powershell
+   git switch nom-de-sa-branche
+   git fetch origin
+   git merge origin/main
+   # En cas de stash : git stash pop, puis résoudre les conflits éventuels.
+   ```
+
+   Remplacer `origin/main` par la branche commune convenue par le groupe si
+   celle-ci diffère. Ne jamais réécrire l'historique d'un autre membre.
+   En cas de conflit, éditer les fichiers marqués, faire `git add` puis
+   `git commit`. Ne pas utiliser `git reset --hard`.
+
+2. **Prérequis.** Windows PowerShell 5.1 ou PowerShell 7, Docker Desktop avec
+   Kubernetes activé (contexte `docker-desktop`), `kubectl`, Python 3.12+,
+   ports 9009/3100/8000/8080 libres et au moins 0,5 Gio de RAM libre au
+   lancement de WebUI. Voir [le guide détaillé](docs/INSTALLATION.md).
+
+3. **Configurer son environnement personnel.** Si `.env` n'existe pas, exécuter
+   `Copy-Item .env.example .env`, puis éditer `.env`. Pour Mistral, garder
+   `LLM_PROVIDER=mistral-api` et renseigner sa propre `MISTRAL_API_KEY`.
+   Pour un moteur local compatible OpenAI, choisir `LLM_PROVIDER=local`,
+   `LLM_BASE_URL` et `LLM_MODEL` selon le moteur et le modèle déjà installés.
+   Aucun modèle local n'est lancé automatiquement.
+   L'affichage utilise `Europe/Zurich` par défaut ; l'option
+   `KUBEAI_DISPLAY_TIMEZONE` dans `.env` accepte un autre fuseau IANA.
+
+4. **Démarrer avec une seule commande**, aussi au premier lancement :
+
+   ```powershell
+   .\scripts\start.ps1
+   ```
+
+   Les dépendances et ressources manquantes sont initialisées, puis le navigateur
+   s'ouvre sur <http://127.0.0.1:8080> après les contrôles de disponibilité.
+   Sur une installation neuve, créer le premier compte administrateur WebUI.
+
+5. **Arrêter la session** :
+
+   ```powershell
+   .\scripts\stop.ps1
+   ```
+
+Le script démarre Docker Desktop s'il est arrêté et attend Kubernetes ; si le
+contexte manque, activer Kubernetes dans ses paramètres. Si un port est occupé,
+libérer le port indiqué. Sous 0,5 Gio de
+RAM libre, WebUI est arrêté. Une clé Mistral absente, un modèle local non
+joignable, un Secret/jeton impossible à créer ou un pod en erreur produisent un
+message explicite ; consulter les journaux dans `.cache/windows-start/` et le
+[guide d'installation](docs/INSTALLATION.md). Si WebUI ne voit pas FastAPI,
+vérifier sa connexion persistée et la passerelle `host.docker.internal`.
 
 ## Architecture
 
@@ -142,7 +226,10 @@ restreindre leurs ACL Windows et ne pas afficher leur contenu. Les instructions
 sur les droits et la configuration LLM sont dans [`agent/README.md`](agent/README.md)
 et [`docs/mistral-api.md`](docs/mistral-api.md).
 
-## Démarrage Windows — backend local
+## Démarrage Windows — procédure manuelle de diagnostic
+
+La procédure quotidienne recommandée est `scripts/start.ps1` ci-dessus. Les
+commandes suivantes restent utiles pour diagnostiquer un composant isolé.
 
 Pour exécuter FastAPI directement sur Windows, utiliser un kubeconfig privé
 contenant le contexte `kubeai-readonly`. Ce compte doit seulement lire les
@@ -230,7 +317,7 @@ Pour les vérifications réelles des démonstrations, suivre le protocole de
 
 ## Équipe et livrables
 
-Le dépôt `kubeAI` est un travail collectif de **Kevin, Vincent et Anass**.
+Le dépôt `kubeAI` est un travail collectif des **quatre étudiants du groupe P5-G17**.
 La description de la conception de départ est conservée dans le PDF fourni ;
 la documentation de livraison décrit l'architecture et les comportements
 effectivement présents dans le dépôt.

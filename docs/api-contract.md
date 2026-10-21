@@ -33,11 +33,31 @@ L'agent impose ses propres instructions et collecte une observation actuelle ava
 chaque génération. Les options supplémentaires non implémentées sont ignorées ;
 les outils, images, fichiers et réponses structurées ne sont pas pris en charge.
 
-La conversation est limitée à 32 messages, 16 000 caractères au total, 12 000 par
-message ; la génération à 1 024 tokens (512 par défaut). Le contexte source inclut
+KubeAI est limité au monitoring Kubernetes. Une question hors périmètre (météo,
+sport, cuisine, etc.) reçoit HTTP 200 avec un message français expliquant ce rôle,
+en JSON comme en SSE. Aucun appel aux sources ou au modèle n'est effectué pour
+ce refus. Les suivis courts d'un diagnostic restent acceptés.
+
+Pour chaque requête, l'agent réduit automatiquement l'historique reçu à 32 messages
+et 16 000 caractères : il conserve la dernière question, puis les tours récents
+complets tant qu'ils tiennent dans cette limite. Une ancienne réponse trop longue
+peut être écartée en gardant sa question, afin de conserver les paramètres d'un
+incident repris plus tard. Cette réduction ne modifie pas la conversation enregistrée
+dans Open WebUI. Chaque message retenu reste limité à 12 000 caractères ; si la
+dernière question dépasse cette taille, l'API retourne HTTP 413 avec une consigne
+lisible pour raccourcir cette question. La génération est limitée à 1 024 tokens
+(512 par défaut). Le contexte source inclut
 jusqu'à 20 pods, incidents prioritaires, et 12 lignes de logs de 400 caractères
 au maximum sur les dix dernières minutes, pour au plus six pods. Une mesure ou
 source manquante est conservée comme telle, sans valeurs fabriquées.
+
+Avant cette réduction, le serveur replie les questions utilisateur en un état
+local à la requête : dernière investigation et au plus quatre précisions récentes.
+Cet état privé ne vient pas d'un champ fourni par le client et n'est pas partagé
+entre utilisateurs. Il conserve le sujet B au-delà de 32 messages sans réinjecter
+les anciens diagnostics comme preuves. Les réponses telles que « dans le namespace
+kubeai », une date seule ou « le second » complètent l'investigation ; les choix
+de ressources sont revérifiés dans les sources autorisées.
 
 Les réponses JSON suivent le format Chat Completions. En SSE, les événements
 `data:` transportent des `chat.completion.chunk` puis `[DONE]`. Un pied de page
@@ -171,14 +191,28 @@ collectés. Le timeout HTTP reste configurable (`UPSTREAM_TIMEOUT_SECONDS`,
 ## Investigation d'incident via le chat et /diagnose
 
 Une question contenant « incident », « chronologie » ou « redémarré » emprunte
-le parcours historique du chat JSON, du flux SSE et de `/diagnose`. La question
-doit contenir `début` et `fin` au format ISO 8601 avec décalage UTC explicite,
-par exemple `début=2026-10-19T14:00:00+02:00 fin=2026-10-19T14:30:00+02:00`.
-`namespace` et `pod` peuvent préciser la cible ; un pod nécessite son namespace.
-Une heure seule, « ce matin », une date sans fuseau, un intervalle inversé ou
-supérieur à six heures donnent une demande de précision sans interroger les sources.
-Sans namespace, la recherche des logs est indisponible pour éviter une lecture
-Loki couvrant tout le cluster.
+le parcours historique du chat JSON, du flux SSE et de `/diagnose`. Un nom de pod
+et une date explicite suffisent. Si l'année est omise, l'agent prend la dernière
+occurrence passée de ce jour en UTC. Si le namespace manque, il cherche le pod
+dans l'inventaire et les événements Kubernetes accessibles en lecture seule ;
+plusieurs correspondances donnent une seule question ciblée.
+Une question de santé actuelle du cluster garde le parcours A même si elle demande
+les redémarrages et les alertes. Sans date pour un pod identifié, B recherche la
+dernière heure UTC et annonce ce choix. « Hier » et « aujourd'hui » sont acceptés.
+
+Avec une date sans heure, l'agent balaie le jour UTC en quatre requêtes de six
+heures au maximum par source. Un événement d'avertissement, un log d'erreur ou
+une variation métrique mesurée peut servir à choisir une fenêtre de moins de
+trente minutes pour l'analyse détaillée, avec un pas métrique de 30 secondes.
+Les marqueurs normaux et de récupération ne sont pas des signaux d'anomalie.
+Cette fenêtre est annoncée comme une fenêtre de
+recherche, jamais comme l'heure supposée de l'incident. En l'absence de signal,
+le rapport indique la couverture de la journée et les données manquantes.
+Chaque requête Loki garde un namespace exact et filtre le pod lorsqu'il est identifié.
+
+Une fenêtre complète reste acceptée : `début=2026-10-19T14:00:00+02:00
+fin=2026-10-19T14:30:00+02:00`. Une heure seule, « ce matin », une fenêtre
+sans fuseau, inversée ou de plus de six heures demandent une précision.
 
 L'observation de `/diagnose` contient `scope: incident`, les bornes normalisées
 en UTC, `timezone` fourni, `namespace`, `pod`, `timeline`, `current_pods`,
@@ -204,14 +238,28 @@ manquantes et vérifications manuelles en lecture seule. Mistral peut seulement
 sélectionner une source déjà appuyée par la chronologie ; son texte libre n'est
 pas publié. Sans clé, le rendu déterministe reste disponible.
 
+Les réponses A, B et C affichent les dates en français dans le fuseau défini par
+`KUBEAI_DISPLAY_TIMEZONE` (`Europe/Zurich` par défaut). La bibliothèque IANA
+`tzdata` gère les changements d'heure. B groupe les événements significatifs
+par date locale avec heures courtes et mention de l'offset ; une heure répétée
+lors du passage à l'heure d'hiver porte son offset propre. C présente la
+ressource, le problème observé, la corrélation, une hypothèse prudente et des
+vérifications en lecture seule. Les horodatages UTC, requêtes, références et
+limites restent dans « Détails techniques / Preuves » et dans l'observation
+structurée de `/diagnose`. Le rendu ne modifie jamais les instants collectés.
+La section secondaire utilise l'élément Markdown/HTML `<details>` ; son état
+replié dépend du moteur d'affichage d'Open WebUI.
+
 ## Essai local
 
 ## Corrélation des preuves via le chat et /diagnose
 
 Une question de lenteur, latence, corrélation, cause ou hypothèse emprunte le
-parcours C avant l'investigation B. Elle exige `début`, `fin`, un décalage UTC,
-`namespace` et `pod` explicites. Une demande ambiguë renvoie
-`scope: correlation`, `status: clarification_required` sans lire les sources.
+parcours C avant l'investigation B. Les références « cet incident », « l'incident
+précédent », « ce pod », « ses logs » et les suivis courts reprennent les paramètres
+de la question d'incident précédente, même si une question A s'intercale et même
+si la réponse B était une demande de précision. Une demande encore ambiguë renvoie
+`scope: correlation`, `status: clarification_required` avec une question ciblée.
 Le chat JSON, SSE et `/diagnose` utilisent le même service.
 
 L'observation contient la chronologie bornée de B et `hypotheses`,
@@ -222,6 +270,14 @@ L'observation contient la chronologie bornée de B et `hypotheses`,
 `recommended_checks`. Les faits et les hypothèses sont calculés par le backend.
 Mistral ne peut que prioriser un identifiant déjà présent ; aucune prose libre
 du modèle n'est ajoutée comme fait.
+
+Les sélections A/B/C utilisent température 0 et un budget de 256 tokens. Mistral
+reçoit un schéma JSON contraint ; le modèle local garde les paramètres compatibles
+standards. Le backend vérifie les clés et valeurs permises et conserve son rapport
+déterministe si le fournisseur échoue. Plusieurs cycles d'incident ne sont pas
+mélangés : une hypothèse CPU doit posséder sa propre base, son pic et ses preuves.
+La sélection des 100 observations conserve les phases, extrema et voisins des
+phases nécessaires au diagnostic, y compris des logs tardifs.
 
 Pour C, Mimir reçoit en plus des requêtes historiques PromQL sur
 `kube_pod_container_status_restarts_total` et

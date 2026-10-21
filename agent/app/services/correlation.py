@@ -6,7 +6,8 @@ import re
 import unicodedata
 
 from app.clients.base import UpstreamError
-from app.services.incident_timeline import HELP, collect, parse_chat_window, stamp
+from app.services.incident_timeline import HELP, application_cpu_episode, collect, resolve_request, stamp
+from app.services.presentation import DEFAULT_ZONE, full_time, missing_summary, readable_observation, technical_details
 
 ALIGN_SECONDS = 300
 
@@ -146,24 +147,21 @@ def assess(report, metrics):
                 ["Autre activité du conteneur pendant la même fenêtre"], [],
                 ["Comparer les séries CPU avant, pendant et après le marqueur de charge."]))
 
-    incident_markers = [e for e in logs if "KUBEAI_DEMO_INCIDENT" in e["observation"]]
-    start_marker = next((e for e in incident_markers if "phase=anomaly_start" in e["observation"]), None)
-    recovery_marker = next((e for e in incident_markers if "phase=recovered" in e["observation"]), None)
-    if start_marker and app_cpu:
-        start_time = datetime.fromisoformat(start_marker["timestamp"].replace("Z", "+00:00")).timestamp()
-        recovery_time = (datetime.fromisoformat(recovery_marker["timestamp"].replace("Z", "+00:00")).timestamp()
-                         if recovery_marker else None)
-        baseline = next((p for p in reversed(app_cpu) if p.timestamp < start_time), None)
-        anomaly_samples = [p for p in app_cpu if p.timestamp >= start_time and
-                           (recovery_time is None or p.timestamp <= recovery_time)]
-        peak = max(anomaly_samples, key=lambda p: p.value, default=None)
-        if baseline and peak and peak.value >= max(baseline.value * 2, baseline.value + 0.01):
+    incident_markers = [e for e in logs if re.search(
+        r"\bphase\s*=\s*(?:normal|anomaly_start|recovered|complete)\b", e["observation"], re.I)]
+    episode = application_cpu_episode(incident_markers, app_cpu)
+    if episode and app_cpu:
+        start_marker, recovery_marker = episode["start_marker"], episode["recovery_marker"]
+        baseline, peak = episode["baseline"], episode["peak"]
+        if episode["count"] > 1:
+            limitations.append(f"Plusieurs cycles observés ; corrélation CPU limitée à celui débutant à "
+                               f"{stamp(datetime.fromtimestamp(episode['start_time'], timezone.utc))}, sans mélanger les exécutions.")
+        if episode["measured_rise"]:
             proof = [_evidence(start_marker), _point_evidence(report, "app_cpu_cores", baseline.timestamp),
                      _point_evidence(report, "app_cpu_cores", peak.timestamp)]
             if recovery_marker:
                 proof.append(_evidence(recovery_marker))
-                after_recovery = next((p for p in app_cpu if p.timestamp >= recovery_time
-                                       and p.timestamp <= recovery_time + 90), None)
+                after_recovery = episode["after"][0] if episode["after"] else None
                 if after_recovery:
                     proof.append(_point_evidence(report, "app_cpu_cores", after_recovery.timestamp))
                     if after_recovery.value >= peak.value:
@@ -171,11 +169,15 @@ def assess(report, metrics):
                 else:
                     limitations.append("Marqueur de retour à la normale présent, mais aucun échantillon CPU postérieur ne permet de le vérifier.")
             hypotheses.append(_hypothesis(
-                "demo_app_cpu", "Hausse du temps CPU du processus observée pendant la fenêtre d'anomalie synthétique.",
+                "demo_app_cpu", "Hausse du temps CPU du processus observée pendant la fenêtre d'anomalie signalée dans les logs.",
                 proof, report, "limitée : association temporelle, causalité non prouvée",
                 ["Une autre activité du processus peut contribuer à la hausse."], [],
                 ["Comparer les échantillons avant, pendant et après l'anomalie et vérifier la cadence de scrape."]
             ))
+        elif baseline is None:
+            limitations.append("Marqueur d'anomalie applicative présent, mais aucun échantillon CPU de base dans le même cycle ; la hausse n'est pas vérifiable.")
+        elif peak is None:
+            limitations.append("Marqueur d'anomalie applicative présent, mais aucun échantillon CPU pendant ce cycle ; la hausse n'est pas vérifiable.")
         else:
             limitations.append("Le marqueur d'anomalie applicative existe, mais les échantillons CPU applicatifs ne montrent pas de hausse mesurable par rapport à la base.")
     elif incident_markers and not app_cpu:
@@ -198,35 +200,82 @@ def assess(report, metrics):
     return report
 
 
-def render(report, model_note):
-    lines = ["**Corrélation de l'incident**", f"Ressource : {report['namespace']}/{report['pod']} ; "
-             f"fenêtre {report['start']} → {report['end']} ({report['timezone']}).",
-             f"Conclusion : {report['conclusion']}.", "", "**Faits observés — preuves**"]
-    lines += [f"- {e['timestamp']} · {e['source']} · {e['resource']} · {e['observation']} "
-              f"[preuve : {e['reference']}]" for e in report["timeline"][:20]] or ["- Aucune observation datée."]
-    lines += ["", "**Hypothèses**"]
+def render(report, model_note, *, zone=DEFAULT_ZONE):
+    resource = f"{report['namespace']}/{report['pod']}"
+    primary = report["hypotheses"][0] if report["hypotheses"] else None
+    supported = primary["supporting_observations"] if primary else []
+    signal = next((item for item in supported if item["source"] == "Loki" and
+                   re.search(r"\bphase\s*=\s*anomaly_start\b", item["observation"], re.I)), None)
+    if signal is None:
+        signal = next((item for item in report["timeline"] if item["source"] == "Loki" and
+                       re.search(r"\bphase\s*=\s*anomaly_start\b", item["observation"], re.I)), None)
+    lines = ["## Corrélation de l'incident", "",
+             f"**Incident analysé :** `{resource}`, du {full_time(report['start'], zone)} "
+             f"au {full_time(report['end'], zone)}.", ""]
+    if signal:
+        lines.append(f"**Problème observé :** anomalie signalée dans les logs Loki "
+                     f"le {full_time(signal['timestamp'], zone)}.")
+    else:
+        lines.append("**Problème observé :** aucun début d'anomalie précis n'est établi par les marqueurs disponibles.")
+    if primary:
+        relation = ("Les marqueurs de Loki encadrent le cycle d'anomalie et Mimir montre une hausse du CPU "
+                    "du processus pendant ce cycle." if primary["id"] == "demo_app_cpu" else primary["description"])
+        hypothesis = ("Une activité CPU accrue du processus a pu contribuer à l'incident ; "
+                      "le lien causal reste à vérifier." if primary["id"] == "demo_app_cpu" else primary["description"])
+        lines += ["", "**Corrélation :** " + relation,
+                  "Les sources coïncident dans la fenêtre examinée ; cette proximité ne démontre pas la cause.",
+                  "", f"**Hypothèse principale :** {hypothesis}",
+                  f"**Niveau de confiance :** {primary['confidence']}.",
+                  "**Justification :** les observations datées ci-dessous proviennent des sources indiquées ; "
+                  "elles ne confirment pas à elles seules la cause racine."]
+        proofs = primary["supporting_observations"][:3]
+        if proofs:
+            lines += ["", "**Preuves principales :**"]
+            lines += [f"- {proof['source']}, {full_time(proof['timestamp'], zone)} : "
+                      f"{readable_observation(proof)}" for proof in proofs]
+        checks = list(primary["recommended_checks"])
+        if primary["id"] in {"demo_app_cpu", "cpu_latency"}:
+            checks.append("Lire, si disponibles, les métriques de throttling CPU et les limites du conteneur sur la même fenêtre.")
+        lines += ["", "**Vérifications recommandées (lecture seule) :**"]
+        lines += ["- " + check for check in dict.fromkeys(checks)]
+    else:
+        lines += ["", "**Corrélation :** preuves insuffisantes pour relier avec certitude les logs et les métriques.",
+                  "", "**Hypothèse principale :** cause indéterminée.",
+                  "**Niveau de confiance :** insuffisant.", "",
+                  "**Vérifications recommandées (lecture seule) :**",
+                  "- Examiner les logs et les métriques disponibles aux mêmes heures."]
+    if any("process_cpu_seconds_total" in limit for limit in report["correlation_limits"]):
+        lines += ["", "La mesure CPU du processus ne permet pas d'affirmer une saturation ou un throttling du conteneur."]
+    if report["missing"]:
+        lines += ["", "**Données manquantes :** " + missing_summary(report["missing"]) + "."]
+    technical = [f"Fenêtre UTC : {report['start']} → {report['end']} ; fuseau demandé : {report['timezone']}",
+                 f"Conclusion structurée : {report['conclusion']}",
+                 f"Observations et références détaillées ({len(report['timeline'])}) :"]
+    technical += [f"{item['timestamp']} | {item['source']} | {item['resource']} | "
+                  f"{item['observation']} | preuve : {item['reference']}" for item in report["timeline"]]
     for item in report["hypotheses"]:
-        lines.append(f"- {item['id']} : {item['description']} Confiance : {item['confidence']}.")
-        lines += [f"  - Appui : {proof['source']} {proof['timestamp']} [{proof['reference']}]"
-                  for proof in item["supporting_observations"]]
-        lines += ["  - Alternative : " + alternative for alternative in item["alternatives"]]
-        lines += ["  - Contradiction : " + contradiction for contradiction in item["contradictions"]]
-        lines += ["  - Vérifier : " + check for check in item["recommended_checks"]]
-    if not report["hypotheses"]:
-        lines.append("- Preuves insuffisantes pour attribuer une cause.")
-    lines += ["", "**Données manquantes et limites**"]
-    lines += ["- " + item for item in report["missing"] + report["correlation_limits"]] or ["- Aucune limite signalée."]
-    lines += ["", "Une coïncidence temporelle ne démontre pas la cause racine.", model_note]
+        technical.append(f"Hypothèse {item['id']} : {item['description']} | confiance : {item['confidence']}")
+        technical += [f"Appui : {proof['source']} {proof['timestamp']} | {proof['reference']}"
+                      for proof in item["supporting_observations"]]
+        technical += [f"Alternative : {value}" for value in item["alternatives"]]
+        technical += [f"Contradiction : {value}" for value in item["contradictions"]]
+    technical += [f"Source {name} : {value['status']}" for name, value in report["sources"].items()]
+    technical += ["Donnée manquante : " + item for item in report["missing"]]
+    technical += ["Limite : " + item for item in report["correlation_limits"] + report["warnings"]]
+    technical.append(model_note)
+    lines += ["", technical_details(technical)]
     return "\n".join(lines)
 
 
 async def correlate(service, chat):
-    window, error = parse_chat_window(chat)
+    window, error, scanned = await resolve_request(service, chat)
     if error or not window["namespace"] or not window["pod"]:
         message = error or ("Précisez namespace et pod pour comparer des preuves de la même ressource. " + HELP)
         return message, {"scope": "correlation", "status": "clarification_required", "message": message}
-    report, _, metrics, _ = await collect(service, window, include_correlation=True)
+    report, _, metrics, _ = scanned or await collect(service, window, include_correlation=True)
     report = assess(report, metrics)
+    if window.get("search_note"):
+        report["correlation_limits"].append(window["search_note"])
     provider_name = service.llm.provider_name
     sensitive_values = service.sensitive_values()
     can_call = bool(sensitive_values) or service.llm.settings.llm_provider == "local"
@@ -241,11 +290,10 @@ async def correlate(service, chat):
             candidates = [{"id": h["id"], "description": h["description"],
                            "references": [p["reference"] for p in h["supporting_observations"]]}
                           for h in report["hypotheses"]]
-            response = await service.llm.complete({"messages": [
-                {"role": "system", "content": "Choisis uniquement un identifiant d'hypothèse fournie ou none. Réponds par JSON avec la clé priority. N'ajoute aucun fait ni texte libre."},
-                {"role": "user", "content": json.dumps(candidates, ensure_ascii=False)}],
-                "temperature": 0, "max_tokens": 32})
-            priority = json.loads(response["choices"][0]["message"]["content"])["priority"]
+            priority = await service.llm.select_option(
+                prompt="Choisis uniquement un identifiant d'hypothèse fournie ou none. Aucun fait ni texte libre.",
+                data={"hypotheses": candidates}, key="priority",
+                options=tuple(h["id"] for h in report["hypotheses"]) + ("none",))
             if priority in {h["id"] for h in report["hypotheses"]}:
                 report["hypotheses"].sort(key=lambda h: h["id"] != priority)
                 model_note = f"{provider_name} a sélectionné la priorité {priority} parmi les hypothèses calculées ; aucun fait supplémentaire n'a été retenu."
@@ -254,10 +302,10 @@ async def correlate(service, chat):
             else:
                 model_note = f"Réponse de {provider_name} rejetée : priorité absente des hypothèses étayées."
         except UpstreamError as error:
-            if "Réponse JSON" in error.message:
-                model_note = f"Réponse API de {provider_name} rejetée : format de réponse invalide. Diagnostic déterministe conservé."
+            if "Réponse JSON" in error.message or "Sélection structurée" in error.message:
+                model_note = f"Réponse de {provider_name} rejetée : format de réponse invalide. Diagnostic déterministe conservé."
             else:
                 model_note = f"Appel à {provider_name} échoué ({error.message}) ; diagnostic déterministe conservé."
         except (KeyError, IndexError, TypeError, ValueError):
             model_note = f"Réponse de {provider_name} rejetée : format ou priorité invalide. Diagnostic déterministe conservé."
-    return render(report, model_note), report
+    return render(report, model_note, zone=service.llm.settings.display_timezone), report

@@ -12,9 +12,7 @@ from app.api.auth import require_api_key
 from app.services.diagnosis import CHAT_MODEL, source_note
 from app.services.source_notes import SourceNoteFilter, filter_source_notes
 from app.services.health_answer import health_answer
-from app.services.global_health import cluster_health_question
-from app.services.incident_timeline import incident_question
-from app.services.correlation import correlation_question
+from app.conversation import OUT_OF_SCOPE, dialogue
 from app.services.privacy import redact_text
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
@@ -22,20 +20,13 @@ LEGACY_MODEL = "kubeai-apertus"
 
 
 def diagnostic_route(chat: ChatRequest) -> str:
-    """Use the same explicit A/B/C routing for JSON, SSE, and /diagnose."""
-    if correlation_question(chat):
-        return "correlation"
-    if incident_question(chat):
-        return "incident"
-    if cluster_health_question(chat):
-        return "cluster"
-    return "chat"
+    """One dialogue resolver shared by JSON, streaming and /diagnose."""
+    return dialogue(chat).route
 
 
 @router.get("/v1/models", tags=["chat"], operation_id="list_chat_models")
 async def models(request: Request):
-    provider = request.app.state.diagnosis.llm.settings.llm_provider
-    name = "kubeAI · Mistral API" if provider == "mistral-api" else "kubeAI · Apertus local"
+    name = "kubeAI · " + request.app.state.diagnosis.llm.provider_name
     return {"object": "list", "data": [
         {"id": CHAT_MODEL, "object": "model", "created": 0, "owned_by": "kubeai", "name": name},
         {"id": LEGACY_MODEL, "object": "model", "created": 0, "owned_by": "kubeai",
@@ -57,6 +48,8 @@ def completion(content, model=CHAT_MODEL):
 
 async def finish_nonstream(service, chat):
     route = diagnostic_route(chat)
+    if route == "out_of_scope":
+        return completion(OUT_OF_SCOPE, chat.model), {"scope": "out_of_scope", "status": "unsupported_question"}
     if route == "correlation":
         text, observation = await service.correlation(chat)
         return completion(text, chat.model), observation
@@ -146,7 +139,8 @@ async def chat_completions(body: ChatRequest, request: Request):
 
     route = diagnostic_route(body)
     if route != "chat":
-        answer, _ = (await service.correlation(body) if route == "correlation" else
+        answer, _ = ((OUT_OF_SCOPE, {}) if route == "out_of_scope" else
+                     await service.correlation(body) if route == "correlation" else
                      await service.incident(body) if route == "incident" else
                      await service.global_health())
         common = {"id": "chatcmpl-" + uuid.uuid4().hex, "object": "chat.completion.chunk",

@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import JSONResponse
 import httpx
 
@@ -53,6 +55,13 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
         return JSONResponse(status_code=503, content={"detail": {
             "source": error.source, "message": error.message,
         }})
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        for item in error.errors():
+            if item.get("type") == "current_question_too_long":
+                return JSONResponse(status_code=413, content={"detail": item["msg"]})
+        return await request_validation_exception_handler(request, error)
 
     application.include_router(router)
     application.include_router(chat_router)

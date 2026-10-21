@@ -27,19 +27,24 @@ de santé globale.
 
 ## B — Investigation historique et chronologie
 
-La démonstration utilise la fenêtre UTC et le pod de scénario déjà collecté.
-La question est volontairement complète afin que l'agent n'invente pas une
-période à partir de l'état actuel :
+La démonstration peut commencer par une question naturelle :
+
+> Analyse l'incident du pod kubeai-demo-incident du 19 octobre.
+
+L'agent cherche le namespace dans l'inventaire et les événements, balaie la journée
+UTC par fenêtres bornées, puis approfondit une fenêtre autour d'un signal observé.
+Il annonce la fenêtre choisie et les sources absentes. Une fenêtre précise reste
+possible pour reproduire les observations déjà collectées :
 
 > Analyse l'incident du pod kubeai-demo-incident dans le namespace kubeai, le 19 octobre 2026 entre 18:25 et 18:33 UTC. Reconstitue la chronologie à partir des logs et des métriques réellement disponibles.
 
 FastAPI interroge les événements Kubernetes disponibles, les séries historiques
-Mimir et les logs Loki sur ces mêmes bornes. La réponse présente d'abord une
-synthèse chronologique d'au plus huit observations significatives. Les marqueurs
-réels `normal`, `anomaly_start`, `recovered` et `complete` situent le scénario ;
-les échantillons CPU applicatifs sont résumés avant, pendant et après la charge
-si les données existent. Toutes les observations et références restent ensuite
-présentes dans la section détaillée.
+Mimir et les logs Loki sur ces mêmes bornes. La réponse présente d'abord un
+résumé, puis au plus douze événements significatifs, groupés par date locale et
+ordonnés à l'heure suisse par défaut. Les marqueurs réels `normal`,
+`anomaly_start`, `recovered` et `complete` situent le scénario ; le cycle CPU
+applicatif retenu montre sa mesure de base et son pic lorsque les deux existent.
+Les observations UTC et références restent dans « Détails techniques / Preuves ».
 
 **Résultat réel rapporté :** l'équipe a obtenu une chronologie de 52 observations
 Mimir/Loki dans Open WebUI. Les événements Kubernetes ne sont inclus que s'ils
@@ -56,8 +61,15 @@ Après B, poser dans le même fil :
 
 > Pour ce même incident, corrèle les logs et le CPU.
 
-Le backend reprend la fenêtre et la ressource de la question précédente,
-uniquement parce que l'utilisateur fait référence au « même incident ». Il
+On peut aussi intercaler la question A, puis demander « Reprends l'incident précédent
+et corrèle ses logs et métriques ». « Pourquoi ? », « Quelles preuves ? » et « Et les
+logs ? » poursuivent le sujet en cours. Après A, « Pourquoi ? » conserve le bilan
+actuel du cluster. Une question météo est refusée avec une explication du périmètre
+monitoring, sans appel au fournisseur.
+
+Le backend reprend les paramètres de la dernière question d'incident pertinente,
+y compris si une question sur la santé du cluster s'est intercalée. Si B n'avait
+pas pu identifier une ressource, C poursuit avec une question ciblée. Il
 présente séparément :
 
 1. les faits horodatés et leurs sources ;

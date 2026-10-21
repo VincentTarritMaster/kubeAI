@@ -42,7 +42,7 @@ spec:
             - name: WEBUI_AUTH
               value: "True"
             - name: ENABLE_SIGNUP
-              value: "False"
+              value: "True"
             - name: DEFAULT_USER_ROLE
               value: pending
             - name: ENABLE_OPENAI_API

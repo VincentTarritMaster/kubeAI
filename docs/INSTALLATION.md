@@ -1,0 +1,101 @@
+# Installation Windows / Docker Desktop
+
+Ce guide décrit le mode **FastAPI sur Windows, Open WebUI dans Kubernetes**.
+Les manifests existants conservent le mode entièrement déployé dans le cluster.
+Lancez les commandes depuis la racine du dépôt dans PowerShell 5.1 ou 7.
+
+## Prérequis
+
+- Windows et Docker Desktop installé, avec Kubernetes activé et le contexte
+  `docker-desktop` disponible. Le script lance Docker Desktop s'il est arrêté
+  et attend que le nœud soit `Ready`.
+- `kubectl` et Python **3.12 ou plus récent** dans le `PATH`.
+- Ressources suffisantes pour Mimir (jusqu'à 2 Gio), Loki (768 Mio), Alloy,
+  kube-state-metrics et Open WebUI (768 Mio). Le script bloque WebUI sous
+  **0,5 Gio de RAM libre** avant et après son déploiement.
+- Ports locaux 9009, 3100, 8000 et 8080 libres.
+- Pour Mistral : clé API personnelle. Pour le profil local : serveur déjà
+  installé et lancé avec une API compatible OpenAI et un modèle listé par `/v1/models`.
+  Aucun modèle n'est téléchargé ou lancé automatiquement.
+
+## Configuration personnelle
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Pour Mistral, choisir `LLM_PROVIDER=mistral-api` et renseigner
+`MISTRAL_API_KEY` dans `.env`, ou utiliser un fichier privé via
+`MISTRAL_API_KEY_FILE`. Pour Ollama ou un autre moteur compatible OpenAI,
+choisir `LLM_PROVIDER=local`, `LLM_BASE_URL=http://127.0.0.1:11434/v1`
+(adapter l'URL) et le nom exact du modèle installé dans `LLM_MODEL`.
+Ollama [expose ces routes compatibles OpenAI](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx),
+mais ce projet n'a pas été testé avec un moteur Ollama réel.
+Le fuseau d'affichage est `Europe/Zurich` par défaut. Pour un autre fuseau IANA,
+définir `KUBEAI_DISPLAY_TIMEZONE` dans `.env` ; les données collectées et les
+preuves restent horodatées en UTC.
+Le moteur local reste à préparer manuellement ; le profil Apertus documenté
+dans [`../llm/README.md`](../llm/README.md) cible macOS et n'est pas lancé sur
+Windows. Sur un poste de 8 Go, éviter un modèle gourmand en mémoire.
+
+Le fichier `.env` est ignoré par Git. Le backend lit ce fichier en mode
+`KUBEAI_ENV=development`. Le script fixe lui-même l'URL de Mimir et de Loki,
+le chemin du kubeconfig de lecture seule et la clé Bearer interne.
+
+## Première installation et usage quotidien
+
+```powershell
+.\scripts\start.ps1
+```
+
+Au premier lancement, `setup.ps1` crée `.venv`, installe
+`agent/requirements.txt`, applique les manifests de monitoring et le RBAC de
+l'agent, attend les déploiements et crée `kubeai-api-auth` seulement s'il manque.
+Le script ne réinstalle les dépendances que si le fichier de dépendances change.
+Il ne lance pas le Deployment `kubeai-agent` : l'agent utilisé ici est FastAPI
+sur Windows. Le script démarre les tunnels Mimir/Loki, renouvelle le jeton du
+ServiceAccount `kubeai-agent`, démarre FastAPI, contrôle le fournisseur IA,
+configure WebUI vers `http://host.docker.internal:8000/v1`, vérifie cette route
+depuis le pod, ouvre un tunnel local et le navigateur.
+
+Le kubeconfig privé est `~/.kube/kubeai-readonly.yaml`. Son contexte
+`kubeai-readonly` utilise uniquement le ServiceAccount défini dans
+`k8s/agent-rbac.yaml`, avec les verbes de lecture déclarés dans ce manifeste.
+Le script renouvelle son jeton à chaque démarrage et limite les ACL du fichier
+à l'utilisateur Windows courant. Aucun jeton n'est imprimé.
+
+L'interface s'ouvre sur <http://127.0.0.1:8080>. La configuration WebUI
+persistée dans son PVC peut prévaloir sur `OPENAI_API_BASE_URL` : si le modèle
+`kubeai` ne répond pas, vérifier l'URL de la connexion dans l'administration
+Open WebUI. Le script vérifie depuis le pod l'accès authentifié à `/v1/models`.
+Sur un PVC neuf, le premier utilisateur crée le compte administrateur dans le
+navigateur. [Open WebUI désactive ensuite les nouvelles inscriptions](https://docs.openwebui.com/features/authentication-access/rbac/roles/). Les comptes
+et réglages déjà présents dans un PVC restent conservés.
+
+Pour arrêter la session :
+
+```powershell
+.\scripts\stop.ps1
+```
+
+Cette commande arrête seulement les processus créés et suivis par `start.ps1`,
+puis met Open WebUI à zéro réplica. Elle ne supprime aucun volume, Secret ni
+composant de monitoring. Les journaux locaux se trouvent dans
+`.cache/windows-start/*.log`, ignoré par Git.
+
+## Dépannage
+
+| Symptôme | Action |
+|---|---|
+| Docker ne répond pas ou contexte absent | `start.ps1` lance Docker Desktop s'il est installé et attend cinq minutes. Si le contexte manque encore, activer Kubernetes dans ses paramètres puis relancer. |
+| RAM libre sous 0,5 Gio | Fermer d'autres applications ou augmenter la mémoire disponible avant de relancer. |
+| Port occupé | Identifier le processus propriétaire avec `Get-NetTCPConnection -LocalPort 8000 -State Listen` (adapter le port), puis libérer le port sans tuer une autre application par erreur. |
+| Secret ou jeton impossible à créer | Vérifier les droits du contexte `docker-desktop` et la présence du ServiceAccount `kubeai-agent` ; relancer `start.ps1`. |
+| Mistral indisponible | Vérifier la clé personnelle, le modèle et l'accès réseau. `/llm/status` utilise `/models`, sans génération. |
+| Modèle local indisponible | Démarrer le moteur séparément ; vérifier l'URL `/v1/models` et le nom exact du modèle. |
+| Pod en erreur | `kubectl --context docker-desktop -n monitoring get pods` ou `-n kubeai get pods`, puis `kubectl describe pod` et `kubectl logs`. |
+| WebUI ne joint pas FastAPI | Vérifier `http://127.0.0.1:8000/ready`, la passerelle `host.docker.internal`, le pare-feu Windows et la connexion WebUI persistée. |
+
+Les vérifications locales ne prouvent pas les scénarios A/B/C en cluster.
+Pour ces démonstrations, suivre [`demo-scenarios.md`](demo-scenarios.md).

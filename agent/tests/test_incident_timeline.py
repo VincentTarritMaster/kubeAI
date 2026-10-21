@@ -112,7 +112,7 @@ def client(*, events=None, pods=None, key="", kube_code=200, mimir_code=200, lok
     def llm(request):
         calls["llm"].append(request)
         assert request.url.path == "/v1/chat/completions"
-        assert json.loads(request.content)["max_tokens"] == 32
+        assert json.loads(request.content)["max_tokens"] == 256
         assert "simulation only: exit code 42" not in request.content.decode()
         return httpx.Response(llm_code, json={"choices": [{"message": {"content": llm_text}}]})
 
@@ -260,7 +260,7 @@ def test_explicit_window_followup_routes_to_incident_without_repeating_keyword()
     question = f"début={START} fin={END} namespace=kubeai pod=kubeai-demo-failure"
     with api:
         text = body(ask(api, question))
-    assert "**Chronologie**" in text
+    assert "## Chronologie de l'incident" in text
 
 
 def test_empty_window_and_expired_events_are_not_falsely_healthy():
@@ -323,14 +323,15 @@ def test_incident_summary_orders_phases_summarizes_cpu_and_keeps_all_detail():
                    "start": "2026-10-19T12:00:00Z", "end": "2026-10-19T12:30:00Z",
                    "timezone": "UTC", "timeline": timeline, "current_pods": [],
                    "missing": [], "warnings": []}, "Mistral non sollicité.")
-    summary = text.split("**Chronologie** — synthèse des observations", 1)[1].split("**CPU du processus", 1)[0]
-    assert [summary.index(f"phase={phase}") for phase in ("normal", "anomaly_start", "recovered", "complete")] == sorted(
-        summary.index(f"phase={phase}") for phase in ("normal", "anomaly_start", "recovered", "complete"))
-    assert "Avant l'anomalie" in text and "Pendant l'anomalie" in text and "Après la récupération" in text
-    assert "0.0200 cœur(s)" in text
+    summary = text.split("## Chronologie de l'incident", 1)[1].split("**CPU du processus", 1)[0]
+    titles = ("Fonctionnement normal", "Début d'une anomalie", "Hausse du CPU du processus",
+              "Récupération signalée", "Fin du scénario")
+    assert [summary.index(title) for title in titles] == sorted(summary.index(title) for title in titles)
+    assert "0,0020 → 0,1000 cœur" in text
+    assert "19 octobre 2026" in summary and "Heure suisse — Europe/Zurich (UTC+2)" in summary
     assert "Observations et références détaillées (12 observations)" in text
     assert "Loki complete" in text and "query_range app_cpu_cores" in text
-    assert text.count("cœur(s) de limite CPU.") == 1
+    assert text.count("cœur(s) de limite CPU.") == 3
     assert all(f"cpu_limit_cores kubeai/kubeai-demo-incident @ {second}" in text for second in (15, 45, 75))
 
 
@@ -444,7 +445,7 @@ def test_conflicting_event_versions_are_flagged_without_causal_claim():
     with api:
         text = body(ask(api))
     assert "Versions contradictoires" in text
-    assert "Aucune cause racine certaine" in text
+    assert "aucune cause racine certaine" in text
 
 
 def test_loki_outside_window_is_excluded_and_clock_warning_is_explicit():

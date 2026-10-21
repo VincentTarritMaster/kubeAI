@@ -74,7 +74,7 @@ def make_client(*, nodes=None, pods=None, events=None, key="", kube_status=None,
         calls["llm"].append(request.url.path)
         assert request.url.path == "/v1/chat/completions"
         sent = json.loads(request.content)
-        assert sent["max_tokens"] == 32
+        assert sent["max_tokens"] == 256
         assert "sensitive-value" not in request.content.decode()
         return httpx.Response(llm_status, json={"choices": [{"message": {"content": llm_text}}]})
 

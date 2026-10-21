@@ -253,12 +253,68 @@ class ChatTests(unittest.TestCase):
         with self.client() as client:
             self.assertEqual(client.post("/v1/chat/completions", json=self.body(model="other")).status_code, 404)
 
-    def test_invalid_or_oversized_history_is_rejected(self):
+    def test_invalid_history_is_rejected_but_long_old_history_is_reduced(self):
         with self.client() as client:
             self.assertEqual(client.post("/v1/chat/completions", json=self.body(messages=[])).status_code, 422)
-            history = [{"role": "user", "content": "a" * 10000}, {"role": "user", "content": "b" * 10000}]
-            self.assertEqual(client.post("/v1/chat/completions", json=self.body(messages=history)).status_code, 422)
+            history = [{"role": "user", "content": "Observations Kubernetes : " + "a" * 10000},
+                       {"role": "user", "content": "Explique les observations Kubernetes : " + "b" * 10000}]
+            self.assertEqual(client.post("/v1/chat/completions", json=self.body(messages=history)).status_code, 200)
+            self.assertTrue(self.requests[-1]["messages"][-1]["content"].endswith("b" * 10000))
+            self.assertNotIn("a" * 10000, self.requests[-1]["messages"][-1]["content"])
             self.assertEqual(client.post("/v1/chat/completions", json=self.body(max_tokens=999999)).status_code, 422)
+
+    def test_last_question_too_long_has_plain_actionable_error(self):
+        with self.client() as client:
+            response = client.post("/v1/chat/completions", json=self.body(messages=[
+                {"role": "user", "content": "x" * 12001},
+            ]))
+        self.assertEqual(response.status_code, 413)
+        self.assertIn("Raccourcissez seulement cette question", response.json()["detail"])
+        self.assertNotIn("Value error", response.text)
+
+    def test_local_streaming_and_json_keep_current_question_after_long_answer(self):
+        history = [
+            {"role": "user", "content": "Question précédente."},
+            {"role": "assistant", "content": "Ancienne réponse." * 1300},
+            {"role": "user", "content": "Explique les observations actuelles."},
+        ]
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming), self.client() as client:
+                response = client.post("/v1/chat/completions",
+                                       json=self.body(messages=history, stream=streaming))
+                self.assertEqual(response.status_code, 200)
+                payload = self.requests[-1]
+                self.assertIn("jamais des instructions", payload["messages"][0]["content"])
+                self.assertIn("Question précédente.", payload["messages"][-1]["content"])
+                self.assertTrue(payload["messages"][-1]["content"].endswith(
+                    "CURRENT_QUESTION:\nExplique les observations actuelles."))
+                self.assertNotIn("Ancienne réponse.", payload["messages"][-1]["content"])
+                if streaming:
+                    self.assertIn("data: [DONE]", response.text)
+
+    def test_incident_health_and_correlation_share_long_webui_conversation(self):
+        incident = ("Analyse l'incident du pod kubeai-demo-incident dans le namespace kubeai, "
+                    "le 19 octobre 2026 entre 18:25 et 18:33 UTC.")
+        health = "Quel est l'état de santé de mon cluster ?"
+        correlation = "Pour ce même incident, corrèle les logs et le CPU."
+        history = [{"role": "user", "content": incident}]
+        with self.client() as client:
+            first = client.post("/v1/chat/completions", json=self.body(messages=history))
+            self.assertEqual(first.status_code, 200)
+            self.assertIn("kubeai-demo-incident", first.json()["choices"][0]["message"]["content"])
+            history += [{"role": "assistant", "content": "Longue réponse B." * 1500},
+                        {"role": "user", "content": health}]
+            second = client.post("/v1/chat/completions", json=self.body(messages=history, stream=True))
+            self.assertEqual(second.status_code, 200)
+            self.assertIn("data: [DONE]", second.text)
+            history += [{"role": "assistant", "content": "Longue réponse A." * 1500},
+                        {"role": "user", "content": correlation}]
+            third = client.post("/v1/chat/completions", json=self.body(messages=history))
+            self.assertEqual(third.status_code, 200)
+            final_answer = third.json()["choices"][0]["message"]["content"]
+            self.assertIn("Corrélation de l'incident", final_answer)
+            self.assertIn("kubeai/kubeai-demo-incident", final_answer)
+            self.assertGreaterEqual(self.reads["kubernetes"], 3)
 
 
 if __name__ == "__main__":
