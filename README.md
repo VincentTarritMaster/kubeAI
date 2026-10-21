@@ -1,6 +1,6 @@
 # P5-G17 | KubeAI
 
-Projet collectif des quatre étudiants du groupe P5-G17 : un assistant d'observabilité
+Projet collectif des 03 étudiants du groupe P5-G17 : un assistant d'observabilité
 Kubernetes qui répond à des questions de santé et d'incident à partir de
 preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`.
 
@@ -317,7 +317,7 @@ Pour les vérifications réelles des démonstrations, suivre le protocole de
 
 ## Équipe et livrables
 
-Le dépôt `kubeAI` est un travail collectif des **quatre étudiants du groupe P5-G17**.
+Le dépôt `kubeAI` est un travail collectif des **3 étudiants du groupe P5-G17**.
 La description de la conception de départ est conservée dans le PDF fourni ;
 la documentation de livraison décrit l'architecture et les comportements
 effectivement présents dans le dépôt.
