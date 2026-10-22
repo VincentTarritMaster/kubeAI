@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import math
+import re
 
 import httpx
 
@@ -27,6 +28,8 @@ class ClusterUsage:
     cpu_cores: float | None
     memory_working_set_bytes: int | None
     warnings: list[str]
+    cpu_query: str | None = None
+    memory_query: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ class PrometheusClient:
     MIN_STEP_SECONDS = 30
     MAX_SERIES = 20
     MAX_POINTS = 400
+    MAX_INCIDENT_SIGNAL_POINTS = 1500
     def __init__(self, http: httpx.AsyncClient, settings: Settings):
         self.http = http
         self.settings = settings
@@ -118,6 +122,7 @@ class PrometheusClient:
             cpu_cores=cpu_samples[0].value if cpu_samples else None,
             memory_working_set_bytes=round(memory_samples[0].value) if memory_samples else None,
             warnings=warnings,
+            cpu_query=queries[0], memory_query=queries[1],
         )
 
     async def history(self, start: float, end: float, namespace: str | None = None,
@@ -202,3 +207,66 @@ class PrometheusClient:
         if truncated:
             warnings.append("Mimir series or sample limit reached")
         return HistoricalMetrics(points, warnings, truncated, partial)
+
+    async def incident_signals(self, start: float, end: float, namespace: str,
+                               pod: str) -> HistoricalMetrics:
+        """Read the annotated demo process CPU at scrape cadence for discovery.
+
+        The broad history method intentionally has a small response budget and
+        can step over a short incident in a six-hour scan. This focused query is
+        one series for one validated resource, sampled every 30 seconds, so B/C
+        can still locate a real CPU signal when Loki has expired its logs.
+        """
+        if (not math.isfinite(start) or not math.isfinite(end)
+                or not start < end or end - start > self.MAX_RANGE_SECONDS):
+            raise ValueError("Incident signal window must be positive and at most six hours")
+        valid = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+        if (not namespace or len(namespace) > 63 or not re.fullmatch(valid, namespace)
+                or not pod or len(pod) > 253 or not re.fullmatch(valid, pod)):
+            raise ValueError("Invalid resource for incident signal query")
+        selector = f'namespace={json.dumps(namespace)},pod={json.dumps(pod)}'
+        query = f"sum by (namespace,pod) (rate(process_cpu_seconds_total{{{selector}}}[1m]))"
+        try:
+            body = await get_json(self.http, "mimir", "api/v1/query_range", params={
+                "query": query, "start": start, "end": end, "step": self.MIN_STEP_SECONDS,
+                "timeout": f"{max(1, int(self.settings.request_timeout * 1000))}ms",
+            })
+        except UpstreamError:
+            raise
+        data = body.get("data")
+        if (body.get("status") != "success" or not isinstance(data, dict)
+                or data.get("resultType") != "matrix" or not isinstance(data.get("result"), list)):
+            raise UpstreamError("mimir", "Invalid incident signal result")
+        warnings = [str(item)[:240] for item in body.get("warnings", [])[:8]] if isinstance(body.get("warnings"), list) else []
+        points = []
+        truncated = False
+        try:
+            series = data["result"]
+            if len(series) > self.MAX_SERIES:
+                truncated = True
+                warnings.append("Mimir incident signal series limit reached")
+            for item in series[:self.MAX_SERIES]:
+                labels, values = item["metric"], item["values"]
+                if (not isinstance(labels, dict) or labels.get("namespace") != namespace
+                        or labels.get("pod") != pod or not isinstance(values, list)):
+                    warnings.append("Mimir incident signal outside requested resource ignored")
+                    continue
+                for raw_stamp, raw_value in values:
+                    moment, value = float(raw_stamp), float(raw_value)
+                    if not math.isfinite(moment) or not math.isfinite(value) or value < 0:
+                        warnings.append("Unusable incident signal sample ignored")
+                        continue
+                    if not start <= moment <= end:
+                        warnings.append("Incident signal outside requested window ignored")
+                        continue
+                    if len(points) >= self.MAX_INCIDENT_SIGNAL_POINTS:
+                        truncated = True
+                        break
+                    points.append(HistoricalPoint(moment, "app_cpu_cores", value, labels))
+                if truncated and len(points) >= self.MAX_INCIDENT_SIGNAL_POINTS:
+                    break
+        except (KeyError, TypeError, ValueError) as error:
+            raise UpstreamError("mimir", "Invalid incident signal sample") from error
+        if truncated:
+            warnings.append("Mimir incident signal point limit reached")
+        return HistoricalMetrics(points, warnings, truncated, False)

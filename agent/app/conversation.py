@@ -27,6 +27,9 @@ def explicit_intent(text):
         return "correlation"
     if historical or re.search(r"(?:que s.est.il passe|a.t.il redemarre|a redemarre|crash|panne|debut=)", text):
         return "incident"
+    if (re.search(r"\bpods?\s+[a-z0-9][a-z0-9-]*", text)
+            and re.search(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{1,2}\s+[a-z]+\s+\d{4})\b", text)):
+        return "incident"
     return None
 
 
@@ -37,12 +40,14 @@ def is_reference(text):
 
 
 def _resource(text):
-    match = re.search(r"\bpod\s*(?:=|:)?\s+([a-z0-9][a-z0-9-]*)", plain(text))
+    match = re.search(r"\bpods?\s*(?:=|:)?\s+([a-z0-9][a-z0-9-]*)", plain(text))
     if not match:
         match = re.search(r"\bpod=([a-z0-9][a-z0-9-]*)", plain(text))
     if not match:
         match = re.search(r"\bincident\s+([a-z0-9]+-[a-z0-9-]+)", plain(text))
-    return match.group(1) if match and match.group(1) not in {"precedent", "concerne", "a-t-il", "est", "suivant"} else None
+    return match.group(1) if match and match.group(1) not in {
+        "precedent", "concerne", "concernes", "et", "a-t-il", "est", "suivant",
+        "dans", "du", "de", "le", "les"} else None
 
 
 def _fragment(text):
@@ -118,6 +123,8 @@ def replay(messages):
                 pending = "resource"
             elif "quel namespace" in normalized or "quel espace de noms" in normalized:
                 pending = "namespace"
+            elif normalized.startswith("quelle annee"):
+                pending = "year"
             elif normalized.startswith(("indiquez au moins une date", "quelle date", "a quelle date")):
                 pending = "date"
             elif normalized.startswith("quel pod"):
@@ -138,6 +145,8 @@ def replay(messages):
             update = "namespace=" + normalized
         if pending == "pod" and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,252}", normalized):
             update = "pod=" + normalized
+        if pending == "year" and re.fullmatch(r"\d{4}", normalized):
+            update = "année=" + normalized
         contextual = bool((incident and (short or is_reference(text) or _fragment(text) or ordinal is not None or
                                          (pending and update != text))) or
                           (active_scope and short))

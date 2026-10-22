@@ -124,7 +124,9 @@ def event_status(raw: dict) -> KubernetesEvent:
         involved_kind=_text(involved.get("kind")), involved_name=_text(involved.get("name")),
         type=_text(raw.get("type")), reason=_safe_text(raw.get("reason")),
         message=_safe_text(message, 1024),
-        count=_count(raw.get("count")), observed_at=observed_at,
+        count=_count(raw.get("count")) or _count(series.get("count")),
+        first_observed_at=_timestamp(raw.get("firstTimestamp"))
+        or _timestamp(metadata.get("creationTimestamp")), observed_at=observed_at,
     )
 
 

@@ -45,7 +45,8 @@ def short_time(value: str | datetime, zone: str = DEFAULT_ZONE) -> str:
 
 def day_heading(moment: datetime, zone: str, *, mixed_offset: bool = False) -> list[str]:
     offset = "offset indiqué pour chaque événement" if mixed_offset else offset_label(moment)
-    return [f"**{date_label(moment)}**", "", f"*{zone_label(zone)} — {zone} ({offset})*", ""]
+    label = zone_label(zone) if zone == DEFAULT_ZONE else f"{zone_label(zone)} — {zone}"
+    return [f"**{date_label(moment)} · {label} ({offset})**", ""]
 
 
 def technical_details(lines: list[str]) -> str:

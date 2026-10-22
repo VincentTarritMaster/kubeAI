@@ -32,10 +32,14 @@ def pod(name="web", namespace="kubeai", *, phase="Running", ready="True",
                                               "restartCount": restarts, "state": state}]}}
 
 
-def warning(*, minutes_ago=2, reason="FailedScheduling", name="web", namespace="other"):
+def warning(*, minutes_ago=2, reason="FailedScheduling", name="web", namespace="other",
+            message="Bearer sensitive-value", count=1, first_minutes_ago=None):
     stamp = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
-    return {"metadata": {"name": "event-1", "namespace": namespace, "creationTimestamp": stamp},
-            "type": "Warning", "reason": reason, "message": "Bearer sensitive-value",
+    first = (datetime.now(timezone.utc) - timedelta(minutes=first_minutes_ago)).isoformat() \
+        if first_minutes_ago is not None else stamp
+    return {"metadata": {"name": "event-1", "namespace": namespace, "creationTimestamp": first},
+            "firstTimestamp": first, "lastTimestamp": stamp,
+            "type": "Warning", "reason": reason, "message": message, "count": count,
             "involvedObject": {"kind": "Pod", "name": name, "namespace": namespace}}
 
 
@@ -76,6 +80,7 @@ def make_client(*, nodes=None, pods=None, events=None, key="", kube_status=None,
         sent = json.loads(request.content)
         assert sent["max_tokens"] == 256
         assert "sensitive-value" not in request.content.decode()
+        assert "PRIVATE-APP-DATA" not in request.content.decode()
         return httpx.Response(llm_status, json={"choices": [{"message": {"content": llm_text}}]})
 
     def no_loki(request):
@@ -115,8 +120,8 @@ def test_healthy_cluster_uses_all_namespaces_mimir_and_no_paid_call_without_key(
     with api:
         text = answer(chat(api))
     assert "**État global : sain selon les contrôles effectués**" in text
-    assert "2 Ready, 0 NotReady" in text
-    assert "2 Running, 0 en erreur" in text
+    assert "2/2 Ready (0 NotReady)" in text
+    assert "2/2 Running (0 en erreur)" in text
     assert "0.750 cœur(s)" in text and "100.0 Mio" in text
     assert "Analyse IA avancée :** indisponible" in text
     assert calls["kubernetes"] == ["/api/v1/nodes", "/api/v1/pods", "/api/v1/events"]
@@ -129,7 +134,7 @@ def test_not_ready_node_degrades_and_mistral_can_select_only_supported_focus():
     with api:
         text = answer(chat(api))
     assert "**État global : dégradé**" in text
-    assert "1 Ready, 1 NotReady" in text
+    assert "1/2 Ready (1 NotReady)" in text
     assert "Nœud `broken` : NotReady" in text
     assert "Priorité de lecture sélectionnée avec Mistral" in text
     assert calls["llm"] == ["/v1/chat/completions"]
@@ -140,7 +145,7 @@ def test_all_nodes_not_ready_is_critical_by_project_rule():
     with api:
         text = answer(chat(api))
     assert "**État global : critique**" in text
-    assert "aucun nœud observé n'est Ready" in text
+    assert "Aucun nœud observé n'est Ready" in text
 
 
 def test_truncated_node_inventory_cannot_claim_every_node_is_not_ready(monkeypatch):
@@ -176,11 +181,11 @@ def test_historical_cumulative_restarts_alone_do_not_degrade_current_health():
     assert "ne suffisent pas à établir un incident récent" in text
 
 
-def test_historical_restarts_plus_recent_warning_degrade_current_health():
+def test_historical_restarts_plus_recent_warning_remain_operational():
     api, _ = make_client(pods=[pod("restarting", "other", restarts=9)], events=[warning()])
     with api:
         text = answer(chat(api))
-    assert "**État global : dégradé**" in text
+    assert "**État global : opérationnel avec avertissements récents**" in text
     assert "9 redémarrage(s) cumulés" in text
     assert "Warning FailedScheduling" in text
 
@@ -235,11 +240,11 @@ def test_kubernetes_unavailable_or_forbidden_is_indeterminate(code):
     assert "sain selon" not in text
 
 
-def test_unavailable_recent_events_do_not_allow_a_healthy_claim():
+def test_unavailable_recent_events_report_partial_supervision():
     api, _ = make_client(event_status=403)
     with api:
         text = answer(chat(api))
-    assert "**État global : indéterminé**" in text
+    assert "**État global : opérationnel avec supervision partielle**" in text
     assert "events : unavailable" in text
 
 
@@ -247,10 +252,95 @@ def test_recent_warning_is_evidence_but_old_warning_is_not():
     api, _ = make_client(events=[warning(), warning(minutes_ago=40, reason="OldEvent")])
     with api:
         text = answer(chat(api))
-    assert "**État global : dégradé**" in text
+    assert "**État global : opérationnel avec avertissements récents**" in text
     assert "FailedScheduling" in text
     assert "OldEvent" not in text
     assert "sensitive-value" not in text
+
+
+@pytest.mark.parametrize("probe", ["readiness", "liveness", "startup"])
+def test_recent_unhealthy_probe_on_ready_pod_is_warning_not_outage(probe):
+    api, _ = make_client(pods=[pod("open-webui", "kubeai", restarts=11)],
+                         events=[warning(reason="Unhealthy", name="open-webui", namespace="kubeai",
+                                         message=f"{probe.capitalize()} probe failed: HTTP 503")],
+                         mimir_empty=True)
+    with api:
+        text = answer(chat(api))
+    visible, technical = text.split("<details>", 1)
+    assert "**État global : opérationnel avec avertissements récents et supervision partielle**" in visible
+    assert "1/1 Ready" in visible and "1/1 Running" in visible
+    assert f"sonde {probe}" in visible and "Ready" in visible
+    assert "CPU et mémoire indisponibles" in visible
+    assert "aucune panne générale" not in visible.lower()
+    assert "panne générale n'est pas démontrée" in visible
+    assert "Unhealthy" in technical and "HTTP 503" in technical
+
+
+def test_reported_14_running_pods_restarts_two_unhealthy_events_and_missing_metrics():
+    pods = [pod(f"service-{index}", "kubeai", restarts=1 if index < 11 else 0)
+            for index in range(14)]
+    pods[0] = pod("open-webui", "kubeai", restarts=1)
+    events = [warning(minutes_ago=10, reason="Unhealthy", name="open-webui",
+                      namespace="kubeai", message="Readiness probe failed"),
+              warning(minutes_ago=2, reason="Unhealthy", name="open-webui",
+                      namespace="kubeai", message="Readiness probe failed")]
+    api, _ = make_client(pods=pods, events=events, mimir_empty=True)
+    with api:
+        text = answer(chat(api))
+    visible = text.split("<details>", 1)[0]
+    assert "**État global : opérationnel avec avertissements récents et supervision partielle**" in visible
+    assert "1/1 Ready" in visible and "14/14 Running" in visible
+    assert "11 conteneur(s)" in visible and "Avertissements récents : 2" in visible
+    assert visible.count("`Unhealthy`") == 2
+    assert "CPU et mémoire indisponibles" in visible
+
+
+def test_repeated_unhealthy_warning_uses_recent_frequency_and_current_pod_state():
+    event = warning(reason="Unhealthy", name="open-webui", namespace="kubeai",
+                    message="Readiness probe failed", count=6, first_minutes_ago=8)
+    api, _ = make_client(pods=[pod("open-webui", "kubeai")], events=[event])
+    with api:
+        text = answer(chat(api))
+    assert "**État global : opérationnel avec avertissements récents**" in text
+    assert "répété dans la fenêtre récente" in text
+
+    api, _ = make_client(pods=[pod("open-webui", "kubeai", ready="False")], events=[event])
+    with api:
+        text = answer(chat(api))
+    assert "**État global : dégradé**" in text
+    assert "en défaut" in text
+
+
+def test_old_repetition_counter_does_not_claim_recent_frequency():
+    event = warning(reason="Unhealthy", name="open-webui", namespace="kubeai",
+                    message="Liveness probe failed", count=12, first_minutes_ago=240)
+    api, _ = make_client(pods=[pod("open-webui", "kubeai")], events=[event])
+    with api:
+        text = answer(chat(api))
+    assert "**État global : opérationnel avec avertissements récents**" in text
+    assert "compteur cumulé, fréquence récente inconnue" in text
+
+
+def test_missing_mimir_metrics_alone_are_partial_supervision():
+    api, _ = make_client(mimir_empty=True)
+    with api:
+        text = answer(chat(api))
+    assert "**État global : opérationnel avec supervision partielle**" in text
+    assert "1/1 Ready" in text and "1/1 Running" in text
+    assert "Mimir CPU : None" in text and "PromQL" in text
+
+
+def test_probe_message_stays_in_local_evidence_and_out_of_mistral_selection():
+    api, calls = make_client(key="test-key", pods=[pod("open-webui", "kubeai")],
+                             events=[warning(reason="Unhealthy", name="open-webui",
+                                             namespace="kubeai",
+                                             message="Readiness probe failed: PRIVATE-APP-DATA")],
+                             llm_text='{"focus":"events"}')
+    with api:
+        text = answer(chat(api))
+    assert calls["llm"] == ["/v1/chat/completions"]
+    assert "PRIVATE-APP-DATA" not in text.split("<details>", 1)[0]
+    assert "PRIVATE-APP-DATA" in text.split("<details>", 1)[1]
 
 
 def test_partial_and_contradictory_node_pod_data_cannot_be_called_healthy():

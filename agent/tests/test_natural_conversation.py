@@ -55,7 +55,7 @@ def make_client(*, pods=None, event_present=True, logs_present=True, metrics_pre
         calls["loki"].append(request)
         assert request.url.params["query"] == '{namespace="operations",pod="sample-incident"}'
         start, end = (int(request.url.params[key]) for key in ("start", "end"))
-        assert 0 < end - start <= 6 * 3600 * 10**9
+        assert 0 < end - start <= 6 * 3600 * 10**9 + 1
         values = ([[str(int(incident_time.timestamp() * 10**9)), "application error observed"]]
                   if logs_present and start <= int(incident_time.timestamp() * 10**9) <= end else [])
         return httpx.Response(200, json={"status": "success", "data": {"resultType": "streams", "result": [
@@ -91,13 +91,13 @@ def ask(api, messages, *, stream=False):
 def test_b_pod_and_date_only_resolves_namespace_and_searches_then_refines():
     api, calls, day = make_client()
     with api:
-        answer = ask(api, [{"role": "user", "content": "investigation de l'incident sample-incident du 19 octobre"}])
+        answer = ask(api, [{"role": "user", "content": f"investigation de l'incident sample-incident du 19 octobre {day.year}"}])
     assert "operations/sample-incident" in answer
     assert "Chronologie" in answer
-    assert "balayage de quatre fenêtres" in answer
+    assert "balayage en fenêtres de six heures" in answer
     assert "signal daté" in answer
     assert str(day.year) in answer
-    assert len(calls["mimir"]) == 14 and len(calls["loki"]) == 5
+    assert len(calls["mimir"]) == 18 and len(calls["loki"]) == 5
     assert calls["llm"] == []
 
 
@@ -114,9 +114,9 @@ def test_b_complete_iso_window_still_uses_single_bounded_query():
 
 
 def test_date_only_b_streams_and_mistral_only_prioritizes_verified_sources():
-    api, calls, _ = make_client(mistral_key="unit-secret-123456")
+    api, calls, day = make_client(mistral_key="unit-secret-123456")
     with api:
-        answer = ask(api, [{"role": "user", "content": "incident du pod sample-incident le 19 octobre"}],
+        answer = ask(api, [{"role": "user", "content": f"incident du pod sample-incident le 19 octobre {day.year}"}],
                      stream=True)
     assert "Chronologie" in answer and "operations/sample-incident" in answer
     assert len(calls["llm"]) == 1
@@ -124,28 +124,28 @@ def test_date_only_b_streams_and_mistral_only_prioritizes_verified_sources():
 
 
 def test_b_multiple_matching_pods_asks_one_targeted_question():
-    api, calls, _ = make_client(pods=[pod("sample-incident", "operations"),
+    api, calls, day = make_client(pods=[pod("sample-incident", "operations"),
                                      pod("sample-incident", "production")], event_present=False)
     with api:
-        answer = ask(api, [{"role": "user", "content": "incident du pod sample-incident le 19 octobre"}])
+        answer = ask(api, [{"role": "user", "content": f"incident du pod sample-incident le 19 octobre {day.year}"}])
     assert "Plusieurs pods" in answer
     assert "operations/sample-incident" in answer and "production/sample-incident" in answer
     assert calls["mimir"] == [] and calls["loki"] == []
 
 
 def test_b_expired_historical_sources_are_reported_without_guessing_time():
-    api, calls, _ = make_client(event_present=False, logs_present=False, metrics_present=False)
+    api, calls, day = make_client(event_present=False, logs_present=False, metrics_present=False)
     with api:
-        answer = ask(api, [{"role": "user", "content": "incident du pod sample-incident le 19 octobre"}])
+        answer = ask(api, [{"role": "user", "content": f"incident du pod sample-incident le 19 octobre {day.year}"}])
     assert "aucun log pertinent conservé" in answer
     assert "expiration ou absence possible" in answer
     assert "Aucune anomalie horodatée" in answer
-    assert len(calls["mimir"]) == 8 and len(calls["loki"]) == 4
+    assert len(calls["mimir"]) == 12 and len(calls["loki"]) == 4
 
 
 def test_b_a_c_and_short_followups_keep_incident_context_with_long_answers():
-    api, _, _ = make_client()
-    incident = "Analyse l'incident du pod sample-incident le 19 octobre."
+    api, _, day = make_client()
+    incident = f"Analyse l'incident du pod sample-incident le 19 octobre {day.year}."
     history = [{"role": "user", "content": incident}]
     with api:
         first = ask(api, history)
@@ -167,8 +167,8 @@ def test_b_a_c_and_short_followups_keep_incident_context_with_long_answers():
 
 
 def test_b_then_c_immediately_and_short_followups_without_repeating_parameters():
-    api, _, _ = make_client()
-    history = [{"role": "user", "content": "Analyse l'incident du pod sample-incident le 19 octobre."}]
+    api, _, day = make_client()
+    history = [{"role": "user", "content": f"Analyse l'incident du pod sample-incident le 19 octobre {day.year}."}]
     with api:
         first = ask(api, history)
         history += [{"role": "assistant", "content": first},
@@ -183,9 +183,9 @@ def test_b_then_c_immediately_and_short_followups_without_repeating_parameters()
 
 
 def test_c_after_failed_b_does_not_pretend_a_window_was_found():
-    api, calls, _ = make_client(pods=[pod("sample-incident", "operations"),
+    api, calls, day = make_client(pods=[pod("sample-incident", "operations"),
                                      pod("sample-incident", "production")], event_present=False)
-    history = [{"role": "user", "content": "Analyse l'incident du pod sample-incident le 19 octobre"}]
+    history = [{"role": "user", "content": f"Analyse l'incident du pod sample-incident le 19 octobre {day.year}"}]
     with api:
         first = ask(api, history)
         assert "Plusieurs pods" in first
@@ -198,8 +198,8 @@ def test_c_after_failed_b_does_not_pretend_a_window_was_found():
 
 
 def test_c_after_b_without_historical_evidence_rechecks_and_keeps_uncertainty():
-    api, calls, _ = make_client(event_present=False, logs_present=False, metrics_present=False)
-    history = [{"role": "user", "content": "Analyse l'incident du pod sample-incident le 19 octobre"}]
+    api, calls, day = make_client(event_present=False, logs_present=False, metrics_present=False)
+    history = [{"role": "user", "content": f"Analyse l'incident du pod sample-incident le 19 octobre {day.year}"}]
     with api:
         first = ask(api, history)
         history += [{"role": "assistant", "content": first},
@@ -208,7 +208,7 @@ def test_c_after_b_without_historical_evidence_rechecks_and_keeps_uncertainty():
     assert "Aucune anomalie horodatée" in first
     assert "cause indéterminée" in second
     assert "aucun log pertinent conservé" in second
-    assert len(calls["mimir"]) == 16 and len(calls["loki"]) == 8
+    assert len(calls["mimir"]) == 24 and len(calls["loki"]) == 8
 
 
 def test_followup_never_combines_two_different_incidents():

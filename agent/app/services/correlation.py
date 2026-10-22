@@ -7,7 +7,9 @@ import unicodedata
 
 from app.clients.base import UpstreamError
 from app.services.incident_timeline import HELP, application_cpu_episode, collect, resolve_request, stamp
-from app.services.presentation import DEFAULT_ZONE, full_time, missing_summary, readable_observation, technical_details
+from app.services.presentation import (DEFAULT_ZONE, date_label, day_heading, local_time,
+                                       missing_summary, offset_label, readable_observation, short_time,
+                                       technical_details)
 
 ALIGN_SECONDS = 300
 
@@ -192,9 +194,32 @@ def assess(report, metrics):
                                          and p.value >= 0.8 * lim.value for lim in cpu_limits)), None)
         if high:
             limitations.append("CPU proche d'une limite observée, mais aucune latence HTTP mesurée ne relie ce signal à la lenteur.")
+    near_limit_pairs = [
+        (point, limit) for point in app_cpu for limit in cpu_limits
+        if _near(point.timestamp, limit.timestamp) and limit.value > 0
+        and point.value >= 0.8 * limit.value
+    ]
+    process_near_limit = bool(near_limit_pairs)
+    if process_near_limit:
+        limitations.append("CPU du processus proche de la limite CPU configurée : vérifier la saturation et le throttling ; aucun des deux n'est prouvé par cette comparaison.")
+        if not incident_markers:
+            process_point, limit_point = max(
+                near_limit_pairs, key=lambda pair: pair[0].value / pair[1].value)
+            hypotheses.append(_hypothesis(
+                "process_cpu_near_limit",
+                "Le CPU du processus a approché la limite CPU configurée ; vérifier une éventuelle saturation ou un throttling.",
+                [_point_evidence(report, "app_cpu_cores", process_point.timestamp),
+                 _point_evidence(report, "cpu_limit_cores", limit_point.timestamp)],
+                report, "faible : mesures Mimir seules, sans preuve de saturation ni de throttling",
+                ["L'activité mesurée peut être normale pour ce processus.",
+                 "La métrique du processus ne représente pas tout le conteneur."],
+                (["Les logs Loki de la fenêtre ne sont pas disponibles ; aucun lien avec un marqueur d'incident n'est confirmé."]
+                 if not logs else []),
+                ["Vérifier les compteurs de throttling CPU du conteneur et sa limite effective à cette heure."]))
     report = {**report, "scope": "correlation", "hypotheses": hypotheses,
               "conclusion": "hypothèses non confirmées" if hypotheses else "cause indéterminée",
-              "correlation_limits": list(dict.fromkeys(limitations))}
+              "correlation_limits": list(dict.fromkeys(limitations)),
+              "process_near_limit": process_near_limit}
     if limitations and report["data_status"] == "complete":
         report["data_status"] = "partial"
     return report
@@ -209,12 +234,43 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
     if signal is None:
         signal = next((item for item in report["timeline"] if item["source"] == "Loki" and
                        re.search(r"\bphase\s*=\s*anomaly_start\b", item["observation"], re.I)), None)
+    start_local, end_local = local_time(report["start"], zone), local_time(report["end"], zone)
+    if primary:
+        proof_candidates = primary["supporting_observations"][:4]
+    else:
+        proof_candidates = []
+        for source in ("Loki", "Mimir", "Kubernetes"):
+            match = next((item for item in report["timeline"] if item["source"] == source
+                          and item["resource"] == resource), None)
+            if match:
+                proof_candidates.append(match)
+        if len(proof_candidates) < 2:
+            proof_candidates.extend(item for item in report["timeline"]
+                                    if item["resource"] == resource and item not in proof_candidates)
+        proof_candidates = proof_candidates[:4]
+    moments = [start_local, end_local] + [local_time(proof["timestamp"], zone) for proof in proof_candidates]
+    if signal:
+        moments.append(local_time(signal["timestamp"], zone))
+    day_offsets = {}
+    for moment in moments:
+        day_offsets.setdefault(moment.date(), set()).add(offset_label(moment))
+
+    def clock(value):
+        local = local_time(value, zone)
+        label = short_time(value, zone)
+        return label + (f" ({offset_label(local)})" if len(day_offsets[local.date()]) > 1 else "")
+
+    period = (f"de {clock(report['start'])} à {clock(report['end'])}"
+              if start_local.date() == end_local.date() else
+              f"du {date_label(start_local)} à {clock(report['start'])} "
+              f"au {date_label(end_local)} à {clock(report['end'])}")
     lines = ["## Corrélation de l'incident", "",
-             f"**Incident analysé :** `{resource}`, du {full_time(report['start'], zone)} "
-             f"au {full_time(report['end'], zone)}.", ""]
+             f"**Incident analysé :** `{resource}`.", "",
+             *day_heading(start_local, zone, mixed_offset=len(day_offsets[start_local.date()]) > 1),
+             f"**Période observée :** {period}.", ""]
     if signal:
         lines.append(f"**Problème observé :** anomalie signalée dans les logs Loki "
-                     f"le {full_time(signal['timestamp'], zone)}.")
+                     f"à {clock(signal['timestamp'])}.")
     else:
         lines.append("**Problème observé :** aucun début d'anomalie précis n'est établi par les marqueurs disponibles.")
     if primary:
@@ -228,26 +284,49 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
                   f"**Niveau de confiance :** {primary['confidence']}.",
                   "**Justification :** les observations datées ci-dessous proviennent des sources indiquées ; "
                   "elles ne confirment pas à elles seules la cause racine."]
-        proofs = primary["supporting_observations"][:3]
+        proofs = proof_candidates
         if proofs:
             lines += ["", "**Preuves principales :**"]
-            lines += [f"- {proof['source']}, {full_time(proof['timestamp'], zone)} : "
-                      f"{readable_observation(proof)}" for proof in proofs]
+            heading_day = start_local.date()
+            for proof in sorted(proofs, key=lambda item: item["timestamp"]):
+                proof_local = local_time(proof["timestamp"], zone)
+                if proof_local.date() != heading_day:
+                    lines += ["", *day_heading(proof_local, zone,
+                                               mixed_offset=len(day_offsets[proof_local.date()]) > 1)]
+                    heading_day = proof_local.date()
+                lines.append(f"- {clock(proof['timestamp'])} — {proof['source']} : "
+                             f"{readable_observation(proof)}")
         checks = list(primary["recommended_checks"])
         if primary["id"] in {"demo_app_cpu", "cpu_latency"}:
             checks.append("Lire, si disponibles, les métriques de throttling CPU et les limites du conteneur sur la même fenêtre.")
+        if report.get("process_near_limit"):
+            checks.append("Comparer le CPU du processus, la limite du conteneur et les métriques de throttling sur la même fenêtre.")
         lines += ["", "**Vérifications recommandées (lecture seule) :**"]
         lines += ["- " + check for check in dict.fromkeys(checks)]
     else:
         lines += ["", "**Corrélation :** preuves insuffisantes pour relier avec certitude les logs et les métriques.",
                   "", "**Hypothèse principale :** cause indéterminée.",
-                  "**Niveau de confiance :** insuffisant.", "",
-                  "**Vérifications recommandées (lecture seule) :**",
+                  "**Niveau de confiance :** insuffisant."]
+        if proof_candidates:
+            lines += ["", "**Preuves principales :**"]
+            heading_day = start_local.date()
+            for proof in sorted(proof_candidates, key=lambda item: item["timestamp"]):
+                proof_local = local_time(proof["timestamp"], zone)
+                if proof_local.date() != heading_day:
+                    lines += ["", *day_heading(proof_local, zone,
+                                               mixed_offset=len(day_offsets[proof_local.date()]) > 1)]
+                    heading_day = proof_local.date()
+                lines.append(f"- {clock(proof['timestamp'])} — {proof['source']} : "
+                             f"{readable_observation(proof)}")
+        lines += ["", "**Vérifications recommandées (lecture seule) :**",
                   "- Examiner les logs et les métriques disponibles aux mêmes heures."]
+        if report.get("process_near_limit"):
+            lines.append("- Comparer le CPU du processus, la limite du conteneur et les métriques de throttling sur la même fenêtre.")
     if any("process_cpu_seconds_total" in limit for limit in report["correlation_limits"]):
         lines += ["", "La mesure CPU du processus ne permet pas d'affirmer une saturation ou un throttling du conteneur."]
-    if report["missing"]:
-        lines += ["", "**Données manquantes :** " + missing_summary(report["missing"]) + "."]
+    if report["missing"] or report["correlation_limits"]:
+        lines += ["", "**Données manquantes :** " + missing_summary(
+            report["missing"] + report["correlation_limits"], limit=2) + "."]
     technical = [f"Fenêtre UTC : {report['start']} → {report['end']} ; fuseau demandé : {report['timezone']}",
                  f"Conclusion structurée : {report['conclusion']}",
                  f"Observations et références détaillées ({len(report['timeline'])}) :"]

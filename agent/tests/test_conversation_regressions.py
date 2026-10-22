@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 import re
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -24,6 +25,7 @@ QUESTION_B = ("Analyse l'incident du pod kubeai-demo-incident dans le namespace 
               "le 19 octobre 2026. Reconstitue la chronologie à partir des données disponibles.")
 QUESTION_C = ("Reprends l'incident précédent et corrèle ses logs et métriques pour proposer "
               "des hypothèses de cause, avec les preuves disponibles.")
+LOCAL_DAY_START = datetime(2026, 10, 19, tzinfo=ZoneInfo("Europe/Zurich")).astimezone(timezone.utc)
 
 
 def user(content):
@@ -76,7 +78,9 @@ def _client(*, pods=None):
         namespace = re.search(r'namespace="([^"]+)"', query)
         target = re.search(r'pod="([^"]+)"', query)
         start, end = (int(request.url.params[key]) for key in ("start", "end"))
-        assert 0 < end - start <= 6 * 3600 * 10**9
+        # Loki receives an exclusive end one nanosecond after the requested
+        # inclusive boundary so the final marker is not dropped.
+        assert 0 < end - start <= 6 * 3600 * 10**9 + 1
         instant = int(moment.timestamp() * 10**9)
         rows = []
         if namespace and target and start <= instant <= end:
@@ -152,7 +156,7 @@ def test_short_incident_followups_keep_the_selected_investigation(followup, expe
     parts = chat_components(request)
     assert parts["pod"] == "kubeai-demo-incident"
     assert parts["namespace"] == "kubeai"
-    assert parts["date"] == datetime(2026, 10, 19, tzinfo=timezone.utc)
+    assert parts["date"] == LOCAL_DAY_START
 
 
 def test_short_namespace_reply_completes_ambiguous_incident_request():
@@ -182,11 +186,8 @@ def test_date_only_reply_keeps_pod_and_namespace_from_pending_investigation():
     parts = chat_components(request)
     assert parts["namespace"] == "kubeai"
     assert parts["pod"] == "kubeai-demo-incident"
-    now = datetime.now(timezone.utc)
-    expected = datetime(now.year, 10, 19, tzinfo=timezone.utc)
-    if expected > now:
-        expected = expected.replace(year=now.year - 1)
-    assert parts["date"] == expected
+    assert parts["date"] is None
+    assert parts["missing_year"] is True
 
 
 def test_ordinal_choice_among_two_matching_pods_resolves_one_target():
@@ -221,7 +222,7 @@ def test_long_conversation_keeps_explicit_incident_anchor_after_many_health_turn
     parts = chat_components(request)
     assert parts["pod"] == "kubeai-demo-incident"
     assert parts["namespace"] == "kubeai"
-    assert parts["date"] == datetime(2026, 10, 19, tzinfo=timezone.utc)
+    assert parts["date"] == LOCAL_DAY_START
 
 
 def test_new_incomplete_incident_does_not_borrow_date_from_another_pod():
@@ -247,7 +248,7 @@ def test_assistant_text_cannot_override_explicit_user_incident_target():
     parts = chat_components(request)
     assert parts["pod"] == "kubeai-demo-incident"
     assert parts["namespace"] == "kubeai"
-    assert parts["date"] == datetime(2026, 10, 19, tzinfo=timezone.utc)
+    assert parts["date"] == LOCAL_DAY_START
 
 
 def test_ordinal_selection_rejects_an_unverified_assistant_candidate():
@@ -276,7 +277,7 @@ def test_pronominal_pod_restart_question_keeps_the_actual_incident_resource():
     parts = chat_components(request)
     assert parts["pod"] == "kubeai-demo-incident"
     assert parts["namespace"] == "kubeai"
-    assert parts["date"] == datetime(2026, 10, 19, tzinfo=timezone.utc)
+    assert parts["date"] == LOCAL_DAY_START
 
 
 def test_why_after_cluster_health_keeps_the_current_health_topic():
@@ -311,36 +312,26 @@ def test_alert_question_discloses_unconfigured_alert_source(stream):
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_incident_without_date_searches_announced_bounded_recent_hour(stream):
+def test_incident_without_date_requests_an_explicit_date_and_window(stream):
     api, calls = _client()
-    before = datetime.now(timezone.utc).timestamp()
     with api:
         answer = ask(api, [user("Analyse l'incident du pod kubeai-demo-incident "
                                  "dans le namespace kubeai.")], stream=stream)
-    after = datetime.now(timezone.utc).timestamp()
-    assert "Chronologie" in answer
-    assert "recherche sur la dernière heure en UTC" in answer
-    assert "Indiquez au moins une date" not in answer
+    assert "date complète et une plage horaire explicite" in answer
     ranges = [request for request in calls["mimir"] if request.url.path.endswith("/query_range")]
-    assert ranges and calls["loki"]
-    for request in ranges:
-        start, end = (float(request.url.params[key]) for key in ("start", "end"))
-        assert end - start == pytest.approx(3600)
-        assert before <= end <= after
-        assert 'namespace="kubeai"' in request.url.params["query"]
-        assert 'pod="kubeai-demo-incident"' in request.url.params["query"]
+    assert ranges == [] and calls["loki"] == []
     assert calls["llm"] == []
 
 
 @pytest.mark.parametrize("phrase, days_ago", [("hier", 1), ("aujourd'hui", 0)])
 def test_relative_day_in_natural_incident_question_is_explicitly_resolved(phrase, days_ago):
-    before = datetime.now(timezone.utc)
+    before = datetime.now(ZoneInfo("Europe/Zurich"))
     request = ChatRequest(messages=[user("Analyse l'incident du pod kubeai-demo-incident "
                                          "dans le namespace kubeai " + phrase + ".")])
-    after = datetime.now(timezone.utc)
+    after = datetime.now(ZoneInfo("Europe/Zurich"))
     assert diagnostic_route(request) == "incident"
     parts = chat_components(request)
     possible_dates = {(instant - timedelta(days=days_ago)).date() for instant in (before, after)}
-    assert parts["date"].date() in possible_dates
+    assert parts["date"].astimezone(ZoneInfo("Europe/Zurich")).date() in possible_dates
     assert parts["date"].tzinfo == timezone.utc
     assert parts["pod"] == "kubeai-demo-incident" and parts["namespace"] == "kubeai"

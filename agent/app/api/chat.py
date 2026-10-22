@@ -72,7 +72,9 @@ async def finish_nonstream(service, chat):
             answer["usage"] = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
     content = answer["choices"][0]["message"]["content"]
     clean = redact_text(filter_source_notes(content), service.sensitive_values())
-    answer["choices"][0]["message"]["content"] = clean + source_note(observation)
+    # Deterministic A/B/C answers already contain their own bounded proof section.
+    # Appending the generic note duplicated dates and made JSON differ from SSE.
+    answer["choices"][0]["message"]["content"] = clean + (source_note(observation) if route == "chat" else "")
     answer["model"] = chat.model
     return answer, observation
 

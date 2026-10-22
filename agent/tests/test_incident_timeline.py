@@ -164,14 +164,13 @@ def test_combined_timeline_sorted_and_current_state_distinguished():
 
 
 @pytest.mark.parametrize("question", ["Que s'est-il passé lors de l'incident de 14 h ?",
-                                     "Pourquoi le pod backend a-t-il redémarré ce matin ?",
-                                     "Incident début=2026-10-19T14:00 fin=2026-10-19T14:30 namespace=kubeai"])
+                                     "Pourquoi le pod backend a-t-il redémarré ce matin ?"])
 def test_ambiguous_window_requests_clarification_without_source_calls(question):
     api, calls = client()
     with api:
         response = api.post("/diagnose", json={"question": question})
     assert response.json()["observation"]["status"] == "clarification_required"
-    assert "fuseau" in response.json()["answer"]
+    assert "date complète" in response.json()["answer"]
     assert not any(calls.values())
 
 
@@ -328,11 +327,26 @@ def test_incident_summary_orders_phases_summarizes_cpu_and_keeps_all_detail():
               "Récupération signalée", "Fin du scénario")
     assert [summary.index(title) for title in titles] == sorted(summary.index(title) for title in titles)
     assert "0,0020 → 0,1000 cœur" in text
-    assert "19 octobre 2026" in summary and "Heure suisse — Europe/Zurich (UTC+2)" in summary
+    assert "**19 octobre 2026 · Heure suisse (UTC+2)**" in summary
+    assert "**<br>\n\n   Marqueur" in summary
     assert "Observations et références détaillées (12 observations)" in text
     assert "Loki complete" in text and "query_range app_cpu_cores" in text
     assert text.count("cœur(s) de limite CPU.") == 3
     assert all(f"cpu_limit_cores kubeai/kubeai-demo-incident @ {second}" in text for second in (15, 45, 75))
+
+
+def test_incident_json_and_streaming_preserve_the_same_markdown_breaks():
+    api, _ = client()
+    with api:
+        normal = body(ask(api))
+        streamed = sse_body(ask(api, stream=True))
+    visible, details = normal.split("<details>", 1)
+    streamed_visible, streamed_details = streamed.split("<details>", 1)
+    assert streamed_visible == visible
+    assert "query_range" in details and "query_range" in streamed_details
+    assert "**<br>\n\n   " in visible
+    assert "## Chronologie de l'incident" in visible
+    assert "2026-10-19T12:00:10Z" in normal.split("<details>", 1)[1]
 
 
 def test_incident_timeline_contains_real_source_entries_only():

@@ -31,6 +31,14 @@ Dans `.env`, garder `LLM_PROVIDER=mistral-api` et remplacer
 <http://127.0.0.1:8080>, se connecter à Open WebUI et choisir le modèle `kubeai`.
 Au premier accès, créer son compte Open WebUI.
 
+Pour essayer B et C avec des preuves fraîches, lancer ensuite
+`.\scripts\run-demo-incident.ps1` depuis la racine, puis demander dans WebUI
+« Analyse l'incident du dernier script de démonstration » et
+« Pour ce même incident, corrèle les logs et les métriques CPU ».
+Une date locale sans année demande l'année ; une date et une plage précises
+restent strictement celles indiquées par l'utilisateur. Voir les
+[scénarios A/B/C](docs/demo-scenarios.md).
+
 ## Installation et démarrage rapide — Windows / Docker Desktop
 
 1. **Mettre à jour sa branche sans perdre son travail.** Vérifier `git status`.

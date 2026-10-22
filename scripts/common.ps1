@@ -69,7 +69,17 @@ function Get-FreeGiB {
 
 function Assert-Memory([double]$Minimum = 0.5) {
     $free = Get-FreeGiB
-    if ($free -lt $Minimum) { throw "RAM libre : $free Gio, sous le seuil de $Minimum Gio. Open WebUI ne sera pas démarré." }
+    if ($free -lt $Minimum) {
+        $deadline = (Get-Date).AddSeconds(30)
+        Write-Host "RAM libre : $free Gio. Attente d'une récupération de mémoire..."
+        do {
+            Start-Sleep -Seconds 3
+            $free = Get-FreeGiB
+        } while ($free -lt $Minimum -and (Get-Date) -lt $deadline)
+    }
+    if ($free -lt $Minimum) {
+        throw "RAM libre : $free Gio, sous le seuil de $Minimum Gio. Fermez une application gourmande en mémoire, puis relancez .\scripts\start.ps1."
+    }
     Write-Host "RAM libre : $free Gio"
 }
 

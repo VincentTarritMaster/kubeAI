@@ -48,7 +48,7 @@ class DiagnosisService:
         report = assess(inventory, None if isinstance(usage, Exception) else usage, mimir_error)
         report = redact_data(report, self.sensitive_values())
         ai_note = "**Analyse IA avancée :** indisponible ; le bilan ci-dessus est déterministe."
-        if report["state"] != "indéterminé" or report["nodes"]["total"] is not None \
+        if report["state_code"] != "indeterminate" or report["nodes"]["total"] is not None \
                 or report["pods"]["total"] is not None:
             prompt = (
                 "Choisis uniquement une priorité étayée par le relevé. Réponds par un objet JSON "
@@ -56,8 +56,13 @@ class DiagnosisService:
                 "N'ajoute aucun fait, texte libre, cause ou commande."
             )
             try:
+                # Event messages can contain arbitrary application data. The model
+                # needs the probe classification, not the raw message.
+                model_report = {**report, "recent_warnings": [
+                    {key: value for key, value in event.items() if key != "message"}
+                    for event in report["recent_warnings"]]}
                 selected = await self.llm.select_option(
-                    prompt=prompt, data=report, key="focus",
+                    prompt=prompt, data=model_report, key="focus",
                     options=("nodes", "pods", "restarts", "events", "availability", "none"))
                 focus = model_focus(report, json.dumps({"focus": selected}))
                 if focus:

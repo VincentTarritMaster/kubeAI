@@ -143,7 +143,7 @@ rejoué avec succès. Les droits effectifs des ServiceAccounts ont été contrô
 lecture des ressources prévues, sans lecture des Secrets ni écriture des workloads.
 
 Ce constat historique ne constitue pas un test de charge,
-de rétention sur 48 h, de sauvegarde ou de haute disponibilité.
+de rétention sur 30 jours, de sauvegarde ou de haute disponibilité.
 
 ### Validation Mimir à réaliser sur un vrai cluster
 
@@ -245,12 +245,21 @@ curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
   validation et sauvegarde. Le stockage filesystem avec StorageClass par défaut
   est destiné au développement, sans haute disponibilité.
 - Loki : PVC 2 Gio, index TSDB v13 et chunks sur filesystem. Le compactor applique
-  une rétention de 48 h, avec suppression différée. Cette rétention n'est pas un
-  quota disque : surveiller l'espace disponible si le volume de logs augmente.
+  une rétention de 30 jours, et les requêtes historiques peuvent couvrir la même
+  période. Cette rétention n'est pas un quota disque : surveiller l'espace
+  disponible si le volume de logs augmente. Une expiration passée est définitive ;
+  augmenter la rétention ne restaure pas les chunks déjà supprimés.
 - Alloy : PVC 1 Gio pour son état et le WAL des métriques. La collecte via l'API
   peut relire des logs après un redémarrage ; elle ne garantit pas l'exactement une fois.
 - Les PVC survivent au remplacement des pods. Les supprimer ou supprimer le
   namespace peut effacer les données. Le stockage Minikube n'est pas une sauvegarde.
+- `scripts/stop.ps1` arrête les port-forward et met Open WebUI à zéro réplique ;
+  il conserve le namespace `monitoring` et les PVC Loki, Mimir et Alloy. Le
+  redémarrage applique les mêmes manifests et remonte les mêmes volumes.
+- Le balayage d'une journée interroge le CPU applicatif `process_cpu_seconds_total`
+  dans Mimir toutes les 30 secondes. Il peut ainsi localiser un signal réel même
+  si Loki n'a plus les logs ; la réponse marque alors explicitement les preuves
+  Loki absentes et reste partielle.
 - Mimir demande 500 millicœurs et 1 Gio, avec limites de 2 cœurs et 2 Gio. Les
   quatre composants de monitoring demandent au total 750 millicœurs et 1 536 Mio ;
   leurs limites cumulées atteignent 4,25 cœurs et 3 456 Mio. S'ajoutent Kubernetes,

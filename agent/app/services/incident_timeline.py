@@ -5,16 +5,18 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 import unicodedata
+from zoneinfo import ZoneInfo
 
 from app.clients.base import UpstreamError
 from app.clients.loki_client import HistoricalLogs
 from app.clients.prometheus_client import HistoricalMetrics, HistoricalPoint
 from app.conversation import dialogue, explicit_intent
 from app.services.privacy import redact_data, redact_text
-from app.services.presentation import DEFAULT_ZONE, day_heading, full_time, local_time, missing_summary, offset_label, short_time, technical_details
+from app.services.presentation import (DEFAULT_ZONE, date_label, day_heading, local_time,
+                                       missing_summary, offset_label, short_time, technical_details)
 
-HELP = ("Indiquez au moins une date explicite, par exemple « incident du pod mon-pod le 19 octobre », "
-        "ou une fenêtre avec fuseau, par exemple début=<ISO-8601> fin=<ISO-8601>. "
+HELP = ("Indiquez une date complète et une plage horaire explicite, par exemple "
+        "« 22 octobre 2026 entre 09:40 et 09:55 » ou début=<ISO-8601> fin=<ISO-8601>. "
         "Une heure isolée ou « ce matin » reste ambiguë.")
 
 
@@ -36,9 +38,63 @@ def _plain(value):
     return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
 
 
-_MONTHS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
-           "juillet": 7, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11,
-           "decembre": 12}
+_MONTHS = {"janvier": 1, "jan": 1, "january": 1, "fevrier": 2, "fev": 2,
+           "feb": 2, "february": 2, "mars": 3, "mar": 3, "march": 3,
+           "avril": 4, "avr": 4, "apr": 4, "april": 4, "mai": 5, "may": 5,
+           "juin": 6, "jun": 6, "june": 6, "juillet": 7, "juil": 7,
+           "jul": 7, "july": 7, "aout": 8, "aug": 8, "august": 8,
+           "septembre": 9, "sept": 9, "sep": 9, "september": 9,
+           "octobre": 10, "oct": 10, "october": 10,
+           "novembre": 11, "nov": 11, "november": 11,
+           "decembre": 12, "dec": 12, "december": 12}
+
+
+def _date_fields(text):
+    """Return only a date actually present in the request (year may be absent)."""
+    found = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
+    if found:
+        return tuple(map(int, found.groups()))
+    found = re.search(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b", text)
+    if found:
+        day, month, year = map(int, found.groups())
+        return year, month, day
+    found = re.search(r"\b(\d{1,2})\s+([a-z]+)\.?(?:\s+(\d{4}))?\b", text)
+    if found and found.group(2) in _MONTHS:
+        return (int(found.group(3)) if found.group(3) else None,
+                _MONTHS[found.group(2)], int(found.group(1)))
+    found = re.search(r"\b([a-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})\b", text)
+    if found and found.group(1) in _MONTHS:
+        return int(found.group(3)), _MONTHS[found.group(1)], int(found.group(2))
+    return None
+
+
+def _timestamp(value, default_zone=DEFAULT_ZONE):
+    """Keep explicit UTC/offsets; interpret offset-free local input in Zurich."""
+    parsed = datetime.fromisoformat(value.rstrip(".,;!?»").replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=ZoneInfo(default_zone))
+
+
+def _date_span(fields, zone):
+    year, month, day = fields
+    start = datetime(year, month, day, tzinfo=zone)
+    following = datetime(year, month, day) + timedelta(days=1)
+    end = following.replace(tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _local_clock(fields, clock, zone):
+    year, month, day = fields
+    naive = datetime(year, month, day, *clock)
+    choices = []
+    for fold in (0, 1):
+        aware = naive.replace(tzinfo=zone, fold=fold)
+        back = aware.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None)
+        if back == naive:
+            choices.append(aware)
+    offsets = {value.utcoffset() for value in choices}
+    if len(offsets) != 1:
+        raise ValueError("Heure locale inexistante ou ambiguë lors du changement d'heure ; indiquez un décalage UTC explicite.")
+    return choices[0]
 
 
 def _clock(value):
@@ -59,53 +115,53 @@ def _components(question):
     tz_label = None
     if first and last:
         try:
-            start = datetime.fromisoformat(first.replace("Z", "+00:00"))
-            end = datetime.fromisoformat(last.replace("Z", "+00:00"))
-            tz_label = first[-6:] if re.search(r"[+-]\d{2}:?\d{2}$", first) else "UTC"
+            start = _timestamp(first)
+            end = _timestamp(last)
+            tz_label = ("UTC" if first.upper().endswith("Z") else
+                        first[-6:] if re.search(r"[+-]\d{2}:?\d{2}$", first) else DEFAULT_ZONE)
         except ValueError:
             start = end = None
-    day_date = None
-    if start is None or end is None:
-        plain = _plain(question)
-        date = re.search(r"\b(\d{1,2})\s+([a-z]+)(?:\s+(\d{4}))?\b", plain)
-        if not date:
-            date = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", plain)
-            if date:
-                day, month, year = map(int, date.groups())
-            else:
-                day = month = year = None
-        else:
-            day, month = int(date.group(1)), _MONTHS.get(date.group(2))
-            year = int(date.group(3)) if date.group(3) else None
-        times = re.search(r"\b(?:entre\s+|de\s+)(\d{1,2}(?::|h)\d{2})\s+(?:et|a)\s+(\d{1,2}(?::|h)\d{2})\b", plain)
-        has_zone = bool(re.search(r"\b(?:utc|gmt)\b|(?<!\w)z\b", plain))
-        if day and month and not year:
-            # An omitted year means the most recent occurrence of this day in UTC.
-            now = datetime.now(timezone.utc)
-            year = next((candidate for candidate in range(now.year, now.year - 5, -1)
-                         if _valid_past_day(candidate, month, day, now)), None)
-        if day and month and year:
+    plain = _plain(question)
+    fields = _date_fields(plain) if not (first or last) else None
+    times = re.search(r"\b(?:entre|between|de|from)\s+(\d{1,2}(?::|h)\d{2})\s+(?:et|a|to|and|-)\s+(\d{1,2}(?::|h)\d{2})\b", plain)
+    clocks = tuple(_clock(times.group(i)) for i in (1, 2)) if times else None
+    if clocks and not all(clocks):
+        clocks = None
+    explicit_utc = bool(re.search(r"\b(?:utc|gmt)\b", plain))
+    zone = timezone.utc if explicit_utc else ZoneInfo(DEFAULT_ZONE)
+    year_hint = re.search(r"\b(?:annee|year)\s*=\s*(\d{4})\b", plain)
+    if not year_hint:
+        year_hint = re.fullmatch(r"\s*(\d{4})\s*", plain)
+    instant = None
+    if not (first or last):
+        match = re.search(r"\b\d{4}-\d\d-\d\d[Tt]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?\b", question)
+        if match:
             try:
-                day_date = datetime(year, month, day, tzinfo=timezone.utc)
+                instant = _timestamp(match.group(0))
             except ValueError:
                 pass
-        if day_date and times and has_zone:
-            first_time, last_time = (_clock(times.group(i)) for i in (1, 2))
-            if first_time and last_time:
-                try:
-                    start = datetime(year, month, day, *first_time, tzinfo=timezone.utc)
-                    end = datetime(year, month, day, *last_time, tzinfo=timezone.utc)
-                    tz_label = "UTC"
-                except ValueError:
-                    start = end = None
-        if day_date is None and not (first or last):
-            today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            if re.search(r"\bavant.hier\b", plain):
-                day_date = today - timedelta(days=2)
-            elif re.search(r"\bhier\b", plain):
-                day_date = today - timedelta(days=1)
-            elif re.search(r"\baujourd.hui\b", plain):
-                day_date = today
+    day_date = day_end = None
+    time_error = None
+    if fields and fields[0] is not None:
+        try:
+            day_date, day_end = _date_span(fields, zone)
+            tz_label = "UTC" if explicit_utc else DEFAULT_ZONE
+            if clocks:
+                start = _local_clock(fields, clocks[0], zone)
+                end = _local_clock(fields, clocks[1], zone)
+        except ValueError as error:
+            if "changement d'heure" in str(error):
+                time_error = str(error)
+            fields = None
+            day_date = day_end = None
+    if not fields and not (first or last):
+        relative = (-1 if re.search(r"\bhier\b", plain) else
+                    0 if re.search(r"\baujourd.hui\b", plain) else None)
+        if relative is not None:
+            local_day = datetime.now(ZoneInfo(DEFAULT_ZONE)).date() + timedelta(days=relative)
+            fields = local_day.year, local_day.month, local_day.day
+            day_date, day_end = _date_span(fields, ZoneInfo(DEFAULT_ZONE))
+            tz_label = DEFAULT_ZONE
     namespace = _arg(question, "namespace")
     pod = _arg(question, "pod")
     plain = _plain(question)
@@ -113,22 +169,45 @@ def _components(question):
         match = re.search(r"\bnamespace\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
         namespace = match.group(1) if match else None
     if not pod:
-        match = re.search(r"\bpod\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
-        pod = match.group(1) if match and match.group(1) not in {"a-t-il", "est", "precedent", "concerne", "suivant"} else None
+        match = re.search(r"\bpods?\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
+        pod = match.group(1) if match and match.group(1) not in {"a-t-il", "est", "precedent", "concerne", "concernes", "et", "suivant", "dans", "du", "de", "le", "les"} else None
     if not pod:
         match = re.search(r"\bincident\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
-        if match and match.group(1) not in {"precedent", "precedente", "actuel", "passe", "suivant", "du", "de", "le", "debut", "fin"}:
+        if match and match.group(1) not in {"precedent", "precedente", "actuel", "passe", "suivant", "du", "de", "le", "debut", "fin", "cree", "creee", "dernier"}:
             pod = match.group(1)
     qualified = re.search(r"\b([a-z0-9][a-z0-9-]{0,62})/([a-z0-9][a-z0-9-]{0,252})\b", plain)
-    if qualified and re.search(r"[a-z]", qualified.group(0)):
+    filler = {"concernes", "concerne", "et", "les", "le", "du", "de", "dans", "pour", "avec"}
+    if (qualified and re.search(r"[a-z]", qualified.group(0))
+            and not (set(qualified.groups()) & filler)):
         namespace, pod = qualified.groups()
+    if pod and not namespace:
+        match = re.search(r"\bdans\s+(?:le\s+namespace\s+)?([a-z0-9][a-z0-9-]*)\b", plain)
+        if match and match.group(1) not in {"le", "la", "les", "un", "une"}:
+            namespace = match.group(1)
     return {"start": start, "end": end, "timezone": tz_label, "namespace": namespace,
-            "pod": pod, "date": day_date if not (first or last) else None}
+            "pod": pod, "date": day_date if not (first or last or instant) and not clocks else None,
+            "date_end": day_end if not (first or last or instant) and not clocks else None,
+            "date_fields": fields, "clocks": clocks,
+            "explicit_utc": explicit_utc if fields else None,
+            "year_hint": int(year_hint.group(1)) if year_hint else None,
+            "missing_year": fields[0] is None if fields else None, "instant": instant,
+            "time_error": time_error,
+            "pod_family": bool(re.search(r"\bpods\s+" + re.escape(pod) + r"\b", plain)) if pod else None}
 
 
 def _validate_components(parts):
+    if parts.get("time_error"):
+        return None, parts["time_error"]
+    if parts.get("missing_year"):
+        return None, "Quelle année pour cette date ? Indiquez l'année à quatre chiffres, par exemple 2026."
     start, end = parts["start"], parts["end"]
+    if start is None and end is None and parts.get("date") and parts.get("date_end"):
+        return {"start": parts["date"], "end": parts["date_end"],
+                "timezone": parts["timezone"] or DEFAULT_ZONE,
+                "namespace": parts["namespace"], "pod": parts["pod"]}, None
     if start is None or end is None:
+        if parts.get("instant"):
+            return None, "Horodatage compris. Indiquez la date et l'heure de fin de la plage à examiner."
         return None, HELP
     if start.tzinfo is None or end.tzinfo is None or start.utcoffset() is None or end.utcoffset() is None:
         return None, HELP
@@ -141,7 +220,7 @@ def _validate_components(parts):
         return None, "Namespace invalide. " + HELP
     if pod and (not namespace or len(pod) > 253 or not re.fullmatch(valid, pod)):
         return None, "Précisez le namespace et un pod valide. " + HELP
-    return {"start": start, "end": end, "timezone": parts["timezone"] or "UTC",
+    return {"start": start, "end": end, "timezone": parts["timezone"] or DEFAULT_ZONE,
             "namespace": namespace, "pod": pod}, None
 
 
@@ -161,19 +240,34 @@ def chat_components(chat):
     parts = _components("")
     for turn in state.incident_turns or users[-1:]:
         update = _components(turn)
-        if update["date"] and not update["start"]:
+        if update["date_fields"]:
             parts["start"] = parts["end"] = None
         if update["start"] or update["end"]:
             parts["date"] = None
+            parts["date_end"] = None
+            parts["date_fields"] = None
+            parts["missing_year"] = False
+        if update["year_hint"] and parts["date_fields"] and not update["date_fields"]:
+            old = parts["date_fields"]
+            update["date_fields"] = (update["year_hint"], old[1], old[2])
+            update["clocks"] = parts["clocks"]
+            update["explicit_utc"] = parts["explicit_utc"]
+            update["missing_year"] = False
         parts.update({key: value for key, value in update.items() if value is not None})
+        if ((update["date_fields"] or update["year_hint"]) and not update["instant"]
+                and parts["date_fields"] and parts["date_fields"][0] is not None):
+            zone = timezone.utc if parts["explicit_utc"] else ZoneInfo(DEFAULT_ZONE)
+            try:
+                parts["date"], parts["date_end"] = _date_span(parts["date_fields"], zone)
+                parts["timezone"] = "UTC" if parts["explicit_utc"] else DEFAULT_ZONE
+                if parts["clocks"]:
+                    parts["start"] = _local_clock(parts["date_fields"], parts["clocks"][0], zone)
+                    parts["end"] = _local_clock(parts["date_fields"], parts["clocks"][1], zone)
+                    parts["date"] = parts["date_end"] = None
+            except ValueError as error:
+                parts["date"] = parts["date_end"] = None
+                parts["time_error"] = str(error)
     return parts
-
-
-def _valid_past_day(year, month, day, now):
-    try:
-        return datetime(year, month, day, tzinfo=timezone.utc) <= now
-    except ValueError:
-        return False
 
 
 def stamp(value):
@@ -406,9 +500,17 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
                     for item in phases)
     anomaly_summary = (f"{anomalies} séquences d'anomalie signalées" if anomalies != 1
                        else "une séquence d'anomalie signalée")
-    start, end = full_time(report["start"], zone), full_time(report["end"], zone)
+    start_local, end_local = local_time(report["start"], zone), local_time(report["end"], zone)
+    start_clock, end_clock = short_time(report["start"], zone), short_time(report["end"], zone)
+    if start_local.date() == end_local.date() and offset_label(start_local) != offset_label(end_local):
+        start_clock += f" ({offset_label(start_local)})"
+        end_clock += f" ({offset_label(end_local)})"
+    period = (f"{start_clock}–{end_clock}"
+              if start_local.date() == end_local.date() else
+              f"du {date_label(start_local)} à {start_clock} "
+              f"au {date_label(end_local)} à {end_clock}")
     lines = ["## Incident observé", "",
-             f"**Ressource :** `{resource}`. **Période :** {start} au {end}.", "",
+             f"**Ressource :** `{resource}`. **Période :** {period}.", "",
              (f"**Résumé :** {anomaly_summary} dans les logs ; "
               f"{len(timeline)} observations datées disponibles."
               if anomalies else f"**Résumé :** {len(timeline)} observations datées disponibles ; "
@@ -451,7 +553,8 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
         if len({offset_label(local_time(entry["timestamp"], zone)) for entry in significant
                 if local_time(entry["timestamp"], zone).date() == day}) > 1:
             clock += f" ({offset_label(local)})"
-        lines.extend([f"{number}. **{clock} — {title}**", "", f"   {description}", ""])
+        # An explicit HTML break survives Open WebUI's incremental Markdown rendering.
+        lines.extend([f"{number}. **{clock} — {title}**<br>", "", f"   {description}", ""])
     if not significant:
         lines.append("Aucune observation datée significative n'a été retrouvée dans la fenêtre consultée.")
     lines += ["", "**CPU du processus applicatif**"]
@@ -459,7 +562,7 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
         qualifier = "hausse mesurée" if episode["measured_rise"] else "pas de hausse significative mesurée"
         baseline = f"{episode['baseline'].value:.4f}".replace(".", ",")
         peak = f"{episode['peak'].value:.4f}".replace(".", ",")
-        lines.append(f"- Cycle du {full_time(episode['start_marker']['timestamp'], zone)} : "
+        lines.append(f"- Cycle retenu à {short_time(episode['start_marker']['timestamp'], zone)} : "
                      f"{baseline} → {peak} cœur ; {qualifier}.")
         if episode["count"] > 1:
             lines.append(f"- {episode['count']} cycles détectés ; cette comparaison concerne un seul cycle.")
@@ -485,15 +588,25 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
 
 
 async def collect(service, window, *, include_correlation=False):
+    log_request = (service.loki.logs_between(
+        window.get("start_ns", int(window["start"].timestamp() * 10**9)),
+        window.get("end_ns", int(window["end"].timestamp() * 10**9)),
+        window["namespace"], window["pod"]) if window["namespace"] else None)
+    # For the controlled demo, establish the actual marker evidence in Loki
+    # before asking the other sources about that exact UTC interval.
+    demo_logs = None
+    if log_request and window["pod"] == "kubeai-demo-incident":
+        demo_logs = (await asyncio.gather(log_request, return_exceptions=True))[0]
+        log_request = None
     tasks = [service.cluster_status.inventory(),
              service.cluster_status.prometheus.history(window["start"].timestamp(),
                                                        window["end"].timestamp(), window["namespace"], window["pod"],
                                                        include_correlation=include_correlation)]
-    if window["namespace"]:
-        tasks.append(service.loki.logs_between(int(window["start"].timestamp() * 10**9),
-                                               int(window["end"].timestamp() * 10**9),
-                                               window["namespace"], window["pod"]))
+    if log_request:
+        tasks.append(log_request)
     results = await asyncio.gather(*tasks, return_exceptions=True)
+    if demo_logs is not None:
+        results.append(demo_logs)
     failures = {name: (value.message if isinstance(value, UpstreamError) else "Lecture indisponible")
                 for name, value in zip(("kubernetes", "mimir", "loki"), results) if isinstance(value, Exception)}
     inventory = None if isinstance(results[0], Exception) else results[0]
@@ -514,27 +627,50 @@ async def collect(service, window, *, include_correlation=False):
 async def resolve_request(service, chat):
     """Resolve a bounded search from user facts and read-only inventory data."""
     parts = chat_components(chat)
-    default_note = None
+    if parts.get("time_error"):
+        return None, parts["time_error"], None
+    if parts["missing_year"]:
+        return None, "Quelle année pour cette date ? Indiquez l'année à quatre chiffres.", None
     if not (parts["start"] or parts["end"] or parts["date"]):
-        text = " ".join(dialogue(chat).incident_turns)
-        if parts["pod"] and not re.search(r"\b(?:matin|soir|heures?|\d+\s*h)\b|(?:debut|début|fin)=", text, re.I):
-            now = datetime.now(timezone.utc)
-            parts.update(start=now - timedelta(hours=1), end=now, timezone="UTC")
-            default_note = "Aucune date indiquée : recherche sur la dernière heure en UTC ; cet intervalle n'est pas une heure d'incident supposée."
-        else:
-            return None, HELP, None
+        question = " ".join(dialogue(chat).incident_turns)
+        normalized = _plain(question)
+        latest_demo = ("dernier" in normalized and
+                       ("kubeai_demo_incident" in normalized or
+                        ("script" in normalized and "demonstration" in normalized)))
+        if latest_demo:
+            try:
+                episode = await service.loki.latest_demo_episode()
+            except UpstreamError as error:
+                return None, f"Recherche des marqueurs Loki impossible : {error.message}", None
+            if not episode:
+                return None, ("Aucun cycle complet KUBEAI_DEMO_INCIDENT conservé dans Loki. "
+                              "Indiquez une date et un pod précis, ou exécutez le script de démonstration."), None
+            start_ns, end_ns = episode["start_ns"], episode["end_ns"]
+            return {"start": datetime.fromtimestamp(start_ns / 10**9, timezone.utc),
+                    "end": datetime.fromtimestamp(end_ns / 10**9, timezone.utc),
+                    "start_ns": start_ns, "end_ns": end_ns,
+                    "timezone": "UTC", "namespace": "kubeai", "pod": "kubeai-demo-incident",
+                    "search_note": "Fenêtre issue des quatre marqueurs KUBEAI_DEMO_INCIDENT réels dans Loki : "
+                                   + ", ".join(f"{item['phase']}={item['timestamp_ns']} ns UTC"
+                                               for item in episode["markers"][:4])}, None, None
+        if parts.get("instant"):
+            return None, "Horodatage compris. Quelle date et heure de fin délimitent l'incident ?", None
+        return None, HELP, None
     inventory = None
-    if parts["pod"] and not parts["namespace"]:
+    if parts["pod"] and (not parts["namespace"] or parts.get("pod_family") or
+                         re.search(r"-x{3,}$", parts["pod"])):
         try:
             inventory = await service.cluster_status.inventory()
         except UpstreamError:
             return None, "Kubernetes est indisponible : indiquez le namespace du pod pour poursuivre.", None
-        pod = parts["pod"]
+        pod = re.sub(r"-x{3,}$", "", parts["pod"])
         resources = {(item.namespace, item.name) for item in inventory.pods or [] if item.name}
         resources.update((item.namespace, item.involved_name) for item in inventory.events or []
                          if item.involved_kind == "Pod" and item.involved_name and item.namespace)
-        exact = {(ns, name) for ns, name in resources if name == pod}
-        matches = exact or {(ns, name) for ns, name in resources if name.startswith(pod + "-")}
+        exact = {(ns, name) for ns, name in resources if name == pod and
+                 (not parts["namespace"] or ns == parts["namespace"])}
+        matches = exact or {(ns, name) for ns, name in resources if name.startswith(pod + "-") and
+                            (not parts["namespace"] or ns == parts["namespace"])}
         state = dialogue(chat)
         if state.selection is not None:
             if state.selection >= len(state.choices) or state.choices[state.selection] not in matches:
@@ -548,7 +684,7 @@ async def resolve_request(service, chat):
             parts["namespace"], parts["pod"] = next(iter(matches))
         else:
             return None, (f"Le pod « {pod} » n'apparaît ni dans l'inventaire actuel ni dans les événements "
-                          "conservés. Dans quel namespace se trouvait-il ?"), None
+                          "conservés. Précisez son nom exact et son namespace."), None
 
     valid = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
     if parts["namespace"] and (len(parts["namespace"]) > 63 or
@@ -559,8 +695,6 @@ async def resolve_request(service, chat):
 
     if parts["start"] or parts["end"]:
         window, error = _validate_components(parts)
-        if window and default_note:
-            window["search_note"] = default_note
         return window, error, None
     if not parts["date"]:
         return None, HELP, None
@@ -585,8 +719,9 @@ def _historical_log_signal(message):
     return 0
 
 
-def _refined_day_window(day, candidates, logs):
+def _refined_day_window(day, candidates, logs, day_end=None):
     """Keep nearby before/after evidence while retaining a useful CPU cadence."""
+    day_end = day_end or day + timedelta(days=1)
     _, anchor = min(candidates, key=lambda item: (-item[0], item[1]))
     nearby = [moment for _, moment in candidates if abs((moment - anchor).total_seconds()) <= 600]
     # A healthy phase is context for a real failure, never an anomaly by itself.
@@ -597,21 +732,22 @@ def _refined_day_window(day, candidates, logs):
         if abs((moment - anchor).total_seconds()) <= 600:
             nearby.append(moment)
     start = max(day, min(nearby) - timedelta(minutes=2))
-    end = min(day + timedelta(days=1), max(nearby) + timedelta(minutes=2))
+    end = min(day_end, max(nearby) + timedelta(minutes=2))
     # Ten minutes supplies baseline and recovery samples even for a single log.
     # The +/- ten-minute neighborhood plus padding stays under thirty minutes,
     # so all six historical series fit the existing budget at a 30-second step.
     if end - start < timedelta(minutes=10):
         middle = start + (end - start) / 2
         start = max(day, middle - timedelta(minutes=5))
-        end = min(day + timedelta(days=1), start + timedelta(minutes=10))
+        end = min(day_end, start + timedelta(minutes=10))
         start = max(day, end - timedelta(minutes=10))
     return start, end, anchor
 
 
 async def scan_date(service, parts, inventory=None):
-    """Search the UTC day in four independent six-hour source-bounded requests."""
+    """Search the requested civil day in source-bounded UTC segments."""
     day = parts["date"]
+    day_end = parts.get("date_end") or day + timedelta(days=1)
     if inventory is None:
         try:
             inventory = await service.cluster_status.inventory()
@@ -622,17 +758,24 @@ async def scan_date(service, parts, inventory=None):
     metrics_ok = logs_ok = 0
     metrics_partial = metrics_truncated = logs_truncated = False
 
-    async def segment(offset):
-        start = day + timedelta(hours=offset)
-        end = start + timedelta(hours=6)
+    async def segment(start):
+        end = min(day_end, start + timedelta(hours=6))
         requests = [service.cluster_status.prometheus.history(start.timestamp(), end.timestamp(),
                                                                parts["namespace"], parts["pod"])]
+        signals = service.cluster_status.prometheus.incident_signals(
+            start.timestamp(), end.timestamp(), parts["namespace"], parts["pod"])
+        requests.append(signals)
         requests.append(service.loki.logs_between(int(start.timestamp() * 10**9),
                                                   int(end.timestamp() * 10**9),
                                                   parts["namespace"], parts["pod"]))
         return await asyncio.gather(*requests, return_exceptions=True)
 
-    for metrics, logs in await asyncio.gather(*(segment(offset) for offset in range(0, 24, 6))):
+    starts = []
+    cursor = day
+    while cursor < day_end:
+        starts.append(cursor)
+        cursor += timedelta(hours=6)
+    for metrics, signals, logs in await asyncio.gather(*(segment(start) for start in starts)):
         if isinstance(metrics, Exception):
             failures["mimir"] = metrics.message if isinstance(metrics, UpstreamError) else "Lecture indisponible"
             metrics = None
@@ -641,6 +784,15 @@ async def scan_date(service, parts, inventory=None):
             scan_warnings.extend(metrics.warnings[:4])
             metrics_partial |= metrics.partial
             metrics_truncated |= metrics.truncated
+        if isinstance(signals, Exception):
+            scan_warnings.append("Mimir : lecture du CPU applicatif indisponible pendant le balayage.")
+            metrics_partial = True
+            if metrics is None:
+                failures["mimir"] = signals.message if isinstance(signals, UpstreamError) else "Lecture indisponible"
+        else:
+            scan_warnings.extend(signals.warnings[:4])
+            metrics_partial |= signals.partial
+            metrics_truncated |= signals.truncated
         if isinstance(logs, Exception):
             failures["loki"] = logs.message if isinstance(logs, UpstreamError) else "Lecture indisponible"
             logs = None
@@ -655,6 +807,11 @@ async def scan_date(service, parts, inventory=None):
             candidate_points.extend(points)
             stride = max(1, (len(points) + 23) // 24)
             all_points.extend(points[::stride][:24])
+        if signals:
+            points = sorted(signals.points, key=lambda item: item.timestamp)
+            candidate_points.extend(points)
+            stride = max(1, (len(points) + 23) // 24)
+            all_points.extend(points[::stride][:24])
         if logs:
             candidate_logs.extend(logs.entries)
             all_logs.extend(logs.entries[:12])
@@ -662,7 +819,7 @@ async def scan_date(service, parts, inventory=None):
     candidates = []
     if inventory:
         for event in inventory.events or []:
-            if (event.observed_at and day <= event.observed_at < day + timedelta(days=1)
+            if (event.observed_at and day <= event.observed_at < day_end
                     and event.namespace == parts["namespace"]
                     and (not parts["pod"] or event.involved_name == parts["pod"])
                     and (event.type == "Warning" or re.search(
@@ -684,31 +841,32 @@ async def scan_date(service, parts, inventory=None):
             candidates.append((1, datetime.fromtimestamp(point.timestamp, timezone.utc)))
         by_metric[metric_key] = point
 
-    note = (f"Date interprétée comme le {day:%Y-%m-%d} UTC ; balayage de quatre fenêtres "
-            "de six heures. L'heure de l'incident n'a pas été supposée.")
+    note = (f"Journée civile demandée en {parts.get('timezone') or 'UTC'} : "
+            f"{stamp(day)} → {stamp(day_end)} ; balayage en fenêtres de six heures maximum. "
+            "L'heure de l'incident n'a pas été supposée.")
     if candidates:
-        start, end, moment = _refined_day_window(day, candidates, candidate_logs)
+        start, end, moment = _refined_day_window(day, candidates, candidate_logs, day_end=day_end)
         detail = (f" Fenêtre approfondie autour d'un signal daté à {stamp(moment)}, avec contexte "
                   "avant/après et un pas métrique de 30 secondes pour les séries disponibles.")
         if any(not start <= candidate <= end for _, candidate in candidates):
             detail += " D'autres signaux existent hors de cette fenêtre ; ils ne sont pas attribués au même incident."
-        window = {"start": start, "end": end, "timezone": "UTC",
+        window = {"start": start, "end": end, "timezone": parts.get("timezone") or "UTC",
                   "namespace": parts["namespace"], "pod": parts["pod"],
                   "search_note": note + detail}
         return window, None, None
 
     # No identifiable anomaly: report the whole searched day from bounded scans.
     combined = (HistoricalMetrics(all_points, scan_warnings, metrics_truncated,
-                                  metrics_partial or metrics_ok < 4) if metrics_ok else None)
+                                  metrics_partial or metrics_ok < len(starts)) if metrics_ok else None)
     combined_logs = HistoricalLogs(all_logs, logs_truncated) if logs_ok else None
     if metrics_ok:
         failures.pop("mimir", None)
     if logs_ok:
         failures.pop("loki", None)
-    day_window = {"start": day, "end": day + timedelta(days=1), "timezone": "UTC",
+    day_window = {"start": day, "end": day_end, "timezone": parts.get("timezone") or "UTC",
                   "namespace": parts["namespace"], "pod": parts["pod"]}
     report = redact_data(build(day_window, inventory, combined, combined_logs, failures), service.sensitive_values())
-    if metrics_ok < 4 or logs_ok < 4:
+    if metrics_ok < len(starts) or logs_ok < len(starts):
         report["warnings"].append("Une ou plusieurs fenêtres de balayage n'ont pas pu être lues ; résultat partiel.")
         report["data_status"] = "partial"
     report["warnings"].append(note + " Aucune anomalie horodatée n'a permis de resserrer la recherche.")

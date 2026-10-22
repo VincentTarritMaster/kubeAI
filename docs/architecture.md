@@ -4,11 +4,13 @@
 
 Open WebUI, l'agent et la collecte sont déployables par `./start.sh` (construction
 de l'image locale puis `kubectl apply -k k8s/`).
-Dans le namespace `monitoring`, Alloy collecte les métriques cAdvisor via le
-proxy Kubernetes, l'état des workloads via kube-state-metrics et les logs via
+Dans le namespace `monitoring`, Alloy collecte les métriques du pod de démonstration
+annoté et l'état des workloads via kube-state-metrics, ainsi que les logs via
 l'API Kubernetes. Les métriques sont envoyées à Mimir, les logs à Loki.
 Les données et le WAL des métriques Alloy reposent sur des PVC. Mimir conserve
-les blocs sans purge automatique ; Loki garde sa rétention de 48 h. Voir
+les blocs sans purge automatique ; Loki garde les logs pendant 30 jours. Le
+balayage historique interroge aussi le CPU applicatif conservé dans Mimir pour
+retrouver une anomalie même après expiration des logs Loki. Voir
 `k8s/monitoring/README.md` pour la validation et les limites de stockage.
 
 Le projet collectif de Kevin, Vincent et Anass déploie Mimir en mode monolithique

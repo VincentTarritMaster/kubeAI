@@ -27,16 +27,24 @@ de santé globale.
 
 ## B — Investigation historique et chronologie
 
-La démonstration peut commencer par une question naturelle :
+Après `run-demo-incident.ps1`, la démonstration peut commencer par une question naturelle :
 
-> Analyse l'incident du pod kubeai-demo-incident du 19 octobre.
+> Analyse l'incident du dernier script de démonstration.
 
-L'agent cherche le namespace dans l'inventaire et les événements, balaie la journée
-UTC par fenêtres bornées, puis approfondit une fenêtre autour d'un signal observé.
-Il annonce la fenêtre choisie et les sources absentes. Une fenêtre précise reste
-possible pour reproduire les observations déjà collectées :
+L'agent retrouve d'abord le dernier cycle complet des quatre marqueurs
+`KUBEAI_DEMO_INCIDENT` dans Loki. Leurs horodatages UTC délimitent ensuite les
+lectures Kubernetes, Loki et Mimir. Il annonce les preuves trouvées et absentes.
+Une fenêtre précise reste possible pour examiner un incident daté :
 
 > Analyse l'incident du pod kubeai-demo-incident dans le namespace kubeai, le 19 octobre 2026 entre 18:25 et 18:33 UTC. Reconstitue la chronologie à partir des logs et des métriques réellement disponibles.
+
+Les dates complètes `22.10.2026`, `22/10/2026`, `22-10-2026`, `22 octobre 2026`,
+`22 oct. 2026`, `22 October 2026`, `October 22, 2026` et `2026-10-22` sont
+interprétées comme dates locales `Europe/Zurich` par défaut. Les heures avec
+suffixe `Z` restent en UTC. Une date sans année ou une heure seule provoque une
+question de clarification ; aucune période implicite ne remplace les bornes
+demandées. Pour un pod préfixé comme `open-webui`, KubeAI vérifie les candidats
+dans Kubernetes et demande un choix si plusieurs pods correspondent.
 
 FastAPI interroge les événements Kubernetes disponibles, les séries historiques
 Mimir et les logs Loki sur ces mêmes bornes. La réponse présente d'abord un
@@ -88,6 +96,33 @@ le temps aux logs de l'anomalie ; l'équipe a obtenu des valeurs de l'ordre de
 une hypothèse limitée, pas une preuve de causalité ni une mesure de saturation
 du conteneur. La cause demeure indéterminée si les autres preuves requises
 manquent.
+
+## Recréer des preuves réelles pour la soutenance
+
+Les observations du 19 octobre sont encore présentes dans Mimir, mais les logs
+Loki ont dépassé l'ancienne rétention de 48 heures et ne peuvent pas être
+reconstitués. La configuration garde désormais logs et fenêtre de recherche
+pendant 30 jours. Cette durée commence à l'ingestion ; changer la rétention ne
+restaure jamais des logs déjà supprimés.
+
+Pour générer un nouvel incident contrôlé, démarrer KubeAI, puis lancer dans
+PowerShell depuis la racine du dépôt :
+
+```powershell
+.\scripts\run-demo-incident.ps1
+```
+
+Le script attend la fin du scénario et affiche ses marqueurs UTC. Le pod mesure
+le CPU réel de son processus et se termine après environ quatre minutes. Il
+refuse de remplacer un scénario déjà en cours ; pour une exécution terminée,
+il remplace uniquement le pod exact de démonstration. Interroger B avec
+« Analyse l'incident du dernier script de démonstration » ou avec la date
+et les heures réellement affichées. Les requêtes A, B et C lisent ces données ;
+elles ne les créent pas. Le pod terminé reste disponible pour Alloy tant qu'il
+n'est pas remplacé.
+`stop.ps1` conserve les PVC de Loki, Mimir et Alloy ; les données restent
+interrogeables après redémarrage pendant leur rétention. Le PVC Loki fait 2 Gio,
+ce qui impose de surveiller son espace libre pendant les 30 jours.
 
 ## Rôle de Mistral / Apertus
 

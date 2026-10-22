@@ -105,7 +105,7 @@ def test_day_search_refines_around_real_anomaly_and_keeps_short_cpu_series():
     assert at(33, 9) == window["end"]
     assert "signal daté à 2026-10-19T18:24:15Z" in window["search_note"]
     assert "signal daté à 2026-10-19T18:22:45Z" not in window["search_note"]
-    assert len(calls) == 14  # Original fixed bound: eight scans + six focused series.
+    assert len(calls) == 18  # Twelve bounded scans + six focused series.
     process_call = next(request for request in calls if "process_cpu_seconds_total" in request.url.params["query"])
     assert int(process_call.url.params["step"]) == 30
     assert len([point for point in metrics.points if point.metric == "app_cpu_cores"]) >= 6
@@ -123,11 +123,12 @@ def test_restarted_run_uses_its_own_measured_baseline_peak_and_recovery():
     assert not any(proof["timestamp"] == "2026-10-19T18:24:15Z" for proof in proofs)
     assert any("app_cpu_cores" in proof["reference"] and "0.0800" in proof["observation"] for proof in proofs)
     text = render(report, "Analyse déterministe.")
-    assert "Cycle du 19 octobre 2026 à 20 h 28 min 39 s" in text
+    assert "Cycle retenu à 20:28:39" in text
     assert "2026-10-19T18:28:39Z" in text.split("<details>", 1)[1]
     correlation = render_correlation(result, "Analyse déterministe.")
     visible = correlation.split("<details>", 1)[0]
-    assert "Problème observé :** anomalie signalée dans les logs Loki le 19 octobre 2026 à 20 h 28 min 39 s" in visible
+    assert "**19 octobre 2026 · Heure suisse (UTC+2)**" in visible
+    assert "Problème observé :** anomalie signalée dans les logs Loki à 20:28:39" in visible
     assert "2026-10-19T18:28:39Z" not in visible
     assert "2026-10-19T18:28:39Z" in correlation.split("<details>", 1)[1]
     assert "throttling" in visible and "lien causal reste à vérifier" in visible
@@ -139,9 +140,9 @@ def test_restarted_run_uses_its_own_measured_baseline_peak_and_recovery():
 
 def test_healthy_phases_report_the_searched_day_without_fabricating_anomaly():
     phases = [(at(22, 45), "normal"), (at(30, 9), "recovered"), (at(31, 9), "complete")]
-    window, report, _, _, calls = asyncio.run(investigate_day(phases=phases))
+    window, report, _, _, calls = asyncio.run(investigate_day(phases=phases, app_cpu=False))
     assert window["start"] == DAY and window["end"] == DAY + timedelta(days=1)
-    assert len(calls) == 8
+    assert len(calls) == 12  # Two bounded Mimir queries, one signal query and Loki per segment.
     assert any("Aucune anomalie horodatée" in warning for warning in report["warnings"])
 
 
@@ -150,6 +151,20 @@ def test_absent_process_samples_remain_an_explicit_limitation():
     result = assess(report, metrics)
     assert not any(hypothesis["id"] == "demo_app_cpu" for hypothesis in result["hypotheses"])
     assert any("série process_cpu_seconds_total absente" in limitation for limitation in result["correlation_limits"])
+
+
+def test_retained_mimir_cpu_finds_incident_when_loki_has_expired_its_logs():
+    window, report, metrics, logs, calls = asyncio.run(investigate_day(phases=[]))
+    assert window["start"] == at(24)
+    assert window["end"] == at(34)
+    assert logs.entries == []
+    assert any(point.metric == "app_cpu_cores" and point.value == 0.08 for point in metrics.points)
+    assert any(entry["source"] == "Mimir" and "app_cpu_cores" in entry["reference"]
+               for entry in report["timeline"])
+    assert any("aucun log pertinent conservé" in missing for missing in report["missing"])
+    assert report["data_status"] == "partial"
+    signal_queries = [request for request in calls if "process_cpu_seconds_total" in request.url.params["query"]]
+    assert signal_queries and all(int(request.url.params["step"]) == 30 for request in signal_queries)
 
 
 def test_baseline_from_a_previous_run_cannot_support_a_later_peak():

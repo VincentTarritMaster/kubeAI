@@ -99,6 +99,7 @@ class KubernetesEvent(BaseModel):
     reason: str | None = None
     message: str | None = None
     count: int | None = None
+    first_observed_at: datetime | None = None
     observed_at: datetime | None = None
 
 

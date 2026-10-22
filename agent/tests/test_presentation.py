@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.config import Settings
+from app.services.correlation import render as render_correlation
 from app.services.incident_timeline import render as render_timeline
 from app.services.presentation import full_time, local_time, missing_summary, technical_details
 
@@ -51,13 +52,22 @@ def test_multi_day_timeline_groups_local_dates_and_keeps_every_utc_proof():
     timeline = [entry("2026-10-19T21:59:59Z", "anomaly_start", "1"),
                 entry("2026-10-19T22:01:00Z", "recovered", "2")]
     answer = render_timeline(report(timeline), "Analyse IA non sollicitée.")
-    visible = answer.split("<details>", 1)[0]
-    assert visible.index("**19 octobre 2026**") < visible.index("23:59:59")
-    assert visible.index("**20 octobre 2026**") < visible.index("00:01:00")
+    visible = answer.split("## Chronologie de l'incident", 1)[1].split("<details>", 1)[0]
+    assert visible.index("**19 octobre 2026 · Heure suisse (UTC+2)**") < visible.index("23:59:59")
+    assert visible.index("**20 octobre 2026 · Heure suisse (UTC+2)**") < visible.index("00:01:00")
     assert visible.index("23:59:59") < visible.index("00:01:00")
     assert "2026-10-19T21:59:59Z" not in visible
     assert "2026-10-19T22:01:00Z" not in visible
     assert all(item["timestamp"] in answer and item["reference"] in answer for item in timeline)
+
+
+def test_numbered_timeline_keeps_title_and_description_apart_for_markdown():
+    timeline = [entry("2026-10-19T18:22:45Z", "normal", "1"),
+                entry("2026-10-19T18:24:15Z", "anomaly_start", "2")]
+    visible = render_timeline(report(timeline), "Sans analyse IA.").split("<details>", 1)[0]
+    assert "1. **20:22:45 — Fonctionnement normal signalé**<br>\n\n   Marqueur `normal` enregistré dans Loki." in visible
+    assert "2. **20:24:15 — Début d'une anomalie**<br>\n\n   Marqueur `anomaly_start` enregistré dans Loki." in visible
+    assert "signaléMarqueur" not in visible
 
 
 def test_dst_fallback_same_day_disambiguates_repeated_clock():
@@ -67,6 +77,22 @@ def test_dst_fallback_same_day_disambiguates_repeated_clock():
     assert "02:30:00 (UTC+2)" in visible
     assert "02:30:00 (UTC+1)" in visible
     assert "offset indiqué pour chaque événement" in visible
+
+
+def test_correlation_proofs_disambiguate_dst_fallback_and_keep_utc_references():
+    proofs = [entry("2026-10-25T00:30:00Z", "anomaly_start", "1"),
+              entry("2026-10-25T01:30:00Z", "recovered", "2")]
+    hypothesis = {"id": "connectivity", "description": "Association temporelle seulement.",
+                  "confidence": "limitée", "supporting_observations": proofs,
+                  "recommended_checks": [], "alternatives": [], "contradictions": []}
+    case = {**report(proofs), "hypotheses": [hypothesis], "conclusion": "hypothèse non confirmée",
+            "correlation_limits": [], "process_near_limit": False}
+    answer = render_correlation(case, "Analyse déterministe.")
+    visible, details = answer.split("<details>", 1)
+    assert "**25 octobre 2026 · Heure suisse (offset indiqué pour chaque événement)**" in visible
+    assert "02:30:00 (UTC+2)" in visible and "02:30:00 (UTC+1)" in visible
+    assert visible.count("25 octobre 2026") == 1
+    assert all(item["timestamp"] in details and item["reference"] in details for item in proofs)
 
 
 def test_technical_evidence_escapes_untrusted_log_text():

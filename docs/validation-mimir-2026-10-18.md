@@ -3,6 +3,10 @@
 Projet collectif de Kevin, Vincent et Anass. Contrôle du 18 octobre 2026.
 Branche : `integration/kubeai`. Base : `23260c91b45ed202e6aef61576263d6cbd1cb615`.
 
+> Rapport historique de l'étape 2. Depuis ce contrôle, Mistral API et les
+> scénarios A/B/C ont été intégrés et exercés ; l'état actuel est résumé dans le
+> [README](../README.md#état-du-projet-et-démonstrations).
+
 | Niveau | Résultat |
 |---|---|
 | Code modifié | Client/configuration/tests/scripts adaptés à Mimir, PromQL conservé |
