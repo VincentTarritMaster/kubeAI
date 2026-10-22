@@ -160,7 +160,9 @@ def test_combined_timeline_sorted_and_current_state_distinguished():
     assert report["current_pods"][0]["phase"] == "Failed"
     assert "actuels et ne prouvent pas leur état passé" in response.json()["answer"]
     assert "cause racine certaine" in response.json()["answer"]
-    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1 and calls["llm"] == []
+    assert "Taux d'erreurs HTTP" in response.json()["answer"]
+    assert "Latence HTTP p95" in response.json()["answer"]
+    assert len(calls["mimir"]) == 8 and len(calls["loki"]) == 1 and calls["llm"] == []
 
 
 @pytest.mark.parametrize("question", ["Que s'est-il passé lors de l'incident de 14 h ?",
@@ -228,7 +230,7 @@ def test_exact_french_demo_prompts_search_historical_sources_and_report_empty_da
     assert "2026-10-19T18:25:00Z" in text and "2026-10-19T18:33:00Z" in text
     assert "kubeai/kubeai-demo-incident" in text
     assert "Données manquantes" in text or "Données manquantes et limites" in text
-    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1
+    assert len(calls["mimir"]) == 8 and len(calls["loki"]) == 1
     assert all(float(item.url.params["start"]) == FRENCH_START for item in calls["mimir"])
     assert all(float(item.url.params["end"]) == FRENCH_END for item in calls["mimir"])
     assert calls["loki"][0].url.params["query"] == '{namespace="kubeai",pod="kubeai-demo-incident"}'
@@ -251,7 +253,7 @@ def test_same_incident_correlation_followup_uses_previous_question_parameters(st
     text = sse_body(response) if stream else body(response)
     assert "2026-10-19T18:25:00Z" in text
     assert "kubeai/kubeai-demo-incident" in text
-    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1
+    assert len(calls["mimir"]) == 8 and len(calls["loki"]) == 1
 
 
 def test_explicit_window_followup_routes_to_incident_without_repeating_keyword():
@@ -477,8 +479,9 @@ def test_partial_mimir_retains_cpu_samples_when_memory_query_fails():
         report = api.post("/diagnose", json={"question": QUESTION}).json()["observation"]
     assert report["sources"]["mimir"]["status"] == "partial"
     metrics = [item for item in report["timeline"] if item["source"] == "Mimir"]
-    assert len(metrics) == 2 and all("CPU" in item["observation"] for item in metrics)
-    assert any("processus applicatif" in item["observation"] for item in metrics)
+    cpu_metrics = [item for item in metrics if "CPU" in item["observation"]]
+    assert len(cpu_metrics) == 2 and all("CPU" in item["observation"] for item in cpu_metrics)
+    assert any("processus applicatif" in item["observation"] for item in cpu_metrics)
     assert not any("mémoire active" in item["observation"] for item in metrics)
 
 

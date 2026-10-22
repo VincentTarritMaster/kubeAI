@@ -43,8 +43,8 @@ Logs des pods kubeai ───── Alloy ── push ────────�
 
 Alloy ne découvre que les pods du namespace `kubeai`. Les métriques applicatives
 restent opt-in via annotations Prometheus. kube-state-metrics expose l'état des
-pods, nœuds, namespaces et contrôleurs. Les scrapes de workloads et de
-kube-state-metrics sont effectués toutes les 15 secondes, ceux des services de
+pods, nœuds, namespaces et contrôleurs. kube-state-metrics est scrapé toutes les
+15 secondes, les pods annotés toutes les 30 secondes, et les services de
 monitoring toutes les 30 secondes. Aucun addon metrics-server n'est requis.
 
 Les logs stdout/stderr des pods `kubeai` sont suivis via l'API Kubernetes, sans
@@ -108,10 +108,19 @@ python3 scripts/verify-observability.py --context minikube
 Sous Windows, remplacer `python3` par `python` si nécessaire.
 Le namespace applicatif `kubeai` doit exister ; il est créé par le déploiement racine.
 Le script crée un pod temporaire BusyBox, qui émet un marqueur unique toutes les
-cinq secondes. Il attend des scrapes récents et réussis, lit CPU/mémoire et l'état
-du pod dans Mimir, puis recherche ce même marqueur dans Loki. Il affiche un
-rapport JSON et supprime son pod, y compris après un échec. Le délai d'attente par
-défaut est 180 secondes ; un échec renvoie un code de sortie non nul.
+cinq secondes. Il attend des scrapes récents et réussis de kube-state-metrics et
+de cAdvisor, vérifie l'état du pod et recherche ce même marqueur dans Loki. Il
+affiche un rapport JSON et supprime son pod, y compris après un échec. Le délai
+d'attente par défaut est 180 secondes ; un échec renvoie un code de sortie non nul.
+`--require-container-metrics` rend l'absence de CPU/mémoire conteneur bloquante.
+
+Pour le pod de démonstration `kubeai-demo-incident`, un second script vérifie
+les compteurs HTTP, l'histogramme de latence, le CPU du processus et les
+marqueurs Loki :
+
+```bash
+python3 scripts/verify-demo-metrics.py --context minikube
+```
 
 Pour vérifier un pod existant sans en créer :
 
@@ -176,11 +185,40 @@ python scripts/verify-observability.py --context minikube
 
 Attendre HTTP 200 pour `/ready`, `status: success` et une valeur `1` pour `up`,
 puis le rapport `status: success` du script. Celui-ci contrôle la fraîcheur des
-scrapes, CPU/mémoire, disponibilité et logs Loki d'un même pod. Des logs Alloy
-sans rejet de `remote_write` et ces séries fraîches attestent de l'ingestion.
+scrapes de kube-state-metrics et de cAdvisor, le CPU/mémoire des conteneurs, la
+disponibilité et les logs Loki d'un même pod. Des logs Alloy sans rejet de
+`remote_write` et ces séries fraîches attestent de l'ingestion.
 Conserver les sorties comme preuve ; aucune de ces commandes de cluster n'a été
 exécutée pour l'intégration statique. La persistance après remplacement d'un pod
 Mimir nécessite encore un essai dédié ultérieur.
+
+## cAdvisor
+
+Alloy scrape le cAdvisor intégré au kubelet via le proxy de l'API Kubernetes :
+
+```text
+https://kubernetes.default.svc/api/v1/nodes/<node>/proxy/metrics/cadvisor
+```
+
+- `job="kubernetes-cadvisor"` ;
+- intervalle de 30 s ;
+- token et CA du ServiceAccount Alloy ;
+- RBAC : `list/watch` sur `nodes` et `get` sur `nodes/proxy` dans
+  [`rbac-cadvisor.yaml`](rbac-cadvisor.yaml).
+
+Ce droit `nodes/proxy` est plus large qu'un simple accès métriques : il passe par
+le proxy kubelet. Il est accordé en lecture seule et le collecteur reste un pod
+non privilégié, sans montage de l'hôte. C'est le compromis retenu pour obtenir
+enfin `container_cpu_usage_seconds_total` et `container_memory_working_set_bytes`.
+
+Vérification :
+
+```promql
+up{job="kubernetes-cadvisor"}
+sum by (namespace, pod) (
+  rate(container_cpu_usage_seconds_total{job="kubernetes-cadvisor",container!="",container!="POD"}[2m])
+)
+```
 
 ## Accès aux API
 
@@ -268,19 +306,24 @@ curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
   de 8 Go. Ces valeurs initiales doivent être mesurées sur la machine de test ;
   elles ne garantissent pas l'absence d'OOM ni la tenue en charge.
 - Les ServiceAccounts ne lisent pas les Secrets et ne modifient pas les workloads.
-  Alloy lit les pods et leurs logs uniquement dans `kubeai`. Aucun droit
-  `nodes/proxy` n'est accordé. cAdvisor est désactivé : les métriques
-  `container_cpu_usage_seconds_total`, `container_memory_working_set_bytes`,
+  Alloy lit les pods et leurs logs uniquement dans `kubeai`. Pour cAdvisor, il
+  possède en plus `list/watch` sur les nœuds et `get` sur `nodes/proxy` ; ce droit
+  est nécessaire pour lire `/metrics/cadvisor` via le proxy de l'API Kubernetes.
+  Il élargit la surface RBAC (accès en lecture au proxy kubelet) mais reste en
+  lecture seule. Les métriques `container_cpu_usage_seconds_total` et
+  `container_memory_working_set_bytes` sont donc collectées ; `/cluster/status`
+  renseigne `cpu_cores` et `memory_working_set_bytes`. Les métriques détaillées
   `container_memory_rss`, `container_network_*`, `container_fs_usage_bytes` et
-  `container_start_time_seconds` ne sont donc pas collectées. KSM fournit toujours
-  les métriques d'état Kubernetes, mais pas les mesures détaillées d'utilisation
-  des conteneurs.
+  `container_start_time_seconds` ne sont pas utilisées par l'agent.
+  `verify-observability.py` vérifie KSM, cAdvisor et Loki ; `--require-container-metrics`
+  rend l'absence de métriques conteneur bloquante.
 - Les services sont internes (`ClusterIP`), sans authentification applicative.
   Les autres pods du cluster peuvent les joindre : ce profil est destiné au
   développement local sur cluster de confiance. Avant une exposition cloud, prévoir
   contrôle d'accès, NetworkPolicies adaptées au CNI, TLS et stockage dimensionné.
 
-Grafana, alertes, traces et LLM ne font pas partie de cette installation.
+Grafana, alertes et LLM ne font pas partie de cette installation ; les traces
+distribuées et Tempo sont hors périmètre.
 L'agent est déployé par la racine `k8s/`, dans `kubeai`, et utilise l'API Mimir compatible Prometheus.
 L'installation de `k8s/monitoring/` seule ne le déploie pas.
 

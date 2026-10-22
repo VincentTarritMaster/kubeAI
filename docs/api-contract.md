@@ -14,6 +14,7 @@ requêtes instantanées utilisent ainsi `/prometheus/api/v1/query`. La variable
 |---|---|---|
 | GET | `/health` | 200 si le processus répond ; aucune dépendance interrogée |
 | GET | `/ready` | 200 si l'agent peut lister les pods ; 503 sinon |
+| GET | `/capabilities` | Sources configurées et familles de métriques réellement disponibles |
 | GET | `/cluster/status` | État Kubernetes et métriques CPU/mémoire des pods |
 | GET | `/cluster/inventory` | Nœuds, pods de tous les namespaces et événements Kubernetes |
 | GET | `/llm/status` | Vérifier le modèle du fournisseur configuré ; effectue un appel au fournisseur |
@@ -23,6 +24,26 @@ requêtes instantanées utilisent ainsi `/prometheus/api/v1/query`. La variable
 
 `/ready` reste indépendant du fournisseur LLM : l'inventaire reste utile sans clé.
 Les routes de chat qui nécessitent une génération retournent alors 503 avec la source `llm`.
+
+## GET /capabilities
+
+Route de diagnostic sans authentification, comme `/cluster/status`. Elle ne
+contacte pas le fournisseur LLM et ne renvoie ni clé ni URL upstream
+arbitraire. Elle indique :
+
+- `sources` : `kubernetes` (configuré), `mimir` (`available` ou
+  `unavailable`), `loki` (configuré) ;
+- `metrics` : `kube_state_metrics`, `cadvisor` et `application_http` avec
+  `available`, `degraded`, `unavailable` ou `unknown`. `application_http` est
+  `available` si `http_requests_total` a un échantillon dans la dernière heure,
+  même après la fin du pod de démonstration ;
+- `llm` : fournisseur, modèle et booléen `configured` (clé Mistral présente, ou
+  profil local sélectionné), sans la clé ;
+- `limits` : bornes d'observation, d'historique et de génération.
+
+Exemple de lecture : si `metrics.cadvisor` vaut `unavailable`, les champs
+`metrics.cpu_cores` et `metrics.memory_working_set_bytes` de
+`/cluster/status` seront `null`. Voir [metrics.md](metrics.md).
 
 ## Chat et diagnostic
 
@@ -133,10 +154,13 @@ fonctionnelle de l'application.
 `metrics.cpu_cores` est la somme des débits CPU des conteneurs en cours, calculés
 par `rate(...[2m])`. `0.1` signifie un dixième de cœur, pas 10 % de la capacité
 totale du cluster. `metrics.memory_working_set_bytes` est leur working set cumulé
-en octets. Les conteneurs sandbox sont exclus.
+en octets. Les conteneurs sandbox sont exclus. cAdvisor est scrapé par défaut via
+le proxy de l'API Kubernetes ; si ce scrape est indisponible, ces deux mesures
+restent `null` et `data_status` vaut `partial`.
 
 Les requêtes ne retiennent que les échantillons cAdvisor des 60 dernières secondes
-(seuil configurable). Les UID des pods et identifiants des conteneurs en cours
+(seuil configurable), lorsque ce job est disponible. Les UID des pods et
+identifiants des conteneurs en cours
 servent à exclure les mesures de leurs prédécesseurs. La somme d'une mesure n'est
 retournée que si elle est disponible pour tous les conteneurs en cours.
 
@@ -226,7 +250,7 @@ redémarrages cumulé ne date pas le redémarrage.
 Mimir utilise `api/v1/query_range` sous le préfixe `/prometheus`, avec des
 requêtes PromQL CPU `rate(...[2m])` et mémoire `container_memory_working_set_bytes`
 agrégées par namespace et pod. Le pas est au moins 30 secondes, avec 20 séries
-et 200 points au plus par mesure. Loki utilise `/loki/api/v1/query_range`,
+et 400 points au total (budget réparti entre les requêtes). Loki utilise `/loki/api/v1/query_range`,
 un sélecteur de namespace et éventuellement de pod, les deux bornes en
 nanosecondes, `direction=forward` et 50 lignes au plus. Les événements et pods
 proviennent de l'inventaire Kubernetes borné existant. Toute limite atteinte
@@ -268,8 +292,9 @@ L'observation contient la chronologie bornée de B et `hypotheses`,
 `description`, `supporting_observations` avec références, `resources`,
 `interval`, `confidence` qualitative, `alternatives`, `contradictions` et
 `recommended_checks`. Les faits et les hypothèses sont calculés par le backend.
-Mistral ne peut que prioriser un identifiant déjà présent ; aucune prose libre
-du modèle n'est ajoutée comme fait.
+Mistral ne peut que signaler une priorité parmi les identifiants déjà calculés ;
+l'ordre déterministe et toutes les hypothèses restent visibles, et aucune prose
+libre du modèle n'est ajoutée comme fait.
 
 Les sélections A/B/C utilisent température 0 et un budget de 256 tokens. Mistral
 reçoit un schéma JSON contraint ; le modèle local garde les paramètres compatibles
@@ -280,18 +305,23 @@ La sélection des 100 observations conserve les phases, extrema et voisins des
 phases nécessaires au diagnostic, y compris des logs tardifs.
 
 Pour C, Mimir reçoit en plus des requêtes historiques PromQL sur
-`kube_pod_container_status_restarts_total` et
-`kube_pod_container_resource_limits` (CPU en cœurs et mémoire en octets).
+`kube_pod_container_status_restarts_total`, `kube_pod_container_resource_limits`
+(CPU en cœurs et mémoire en octets), `process_cpu_seconds_total`, et — lorsque
+l'application expose une instrumentation HTTP — `http_requests_total` et
+`http_request_duration_seconds_bucket` (ratio d'erreurs 5xx et latence p95).
 Ces séries sont utilisées seulement si Mimir les retourne avec le namespace et
-le pod demandés. Les cinq familles de requêtes restent dans une fenêtre de six
+le pod demandés. Les huit familles de requêtes restent dans une fenêtre de six
 heures, avec au plus 20 séries et 400 points au total ; le pas augmente pour
 respecter cette borne. Loki garde 50 lignes au plus, avec le filtre exact de
 namespace et pod. Les listes Kubernetes conservent leurs plafonds de l'inventaire.
 
-La configuration active ne collecte **aucune latence p95 ni erreur HTTP NestJS**.
-Une hausse CPU seule ne démontre ni saturation ni cause d'une lenteur. Une
-instrumentation applicative HTTP, son scrape et la vérification de ses labels
-sont nécessaires avant d'exploiter la règle CPU + latence en situation réelle.
+La configuration active ne collecte pas de latence ou d'erreurs HTTP pour une
+application qui ne les expose pas. Le pod de démonstration expose désormais
+`http_requests_total` et `http_request_duration_seconds` ; l'agent peut donc
+produire l'hypothèse `demo_http_errors`. Une hausse CPU seule ne démontre ni
+saturation ni cause d'une lenteur. Pour une application réelle, une
+instrumentation HTTP, son scrape et la vérification de ses labels restent
+nécessaires avant d'exploiter la règle CPU + latence.
 Les règles qualitatives et le protocole de démonstration figurent dans
 `docs/demo-scenarios.md`.
 

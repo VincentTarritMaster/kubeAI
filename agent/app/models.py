@@ -11,6 +11,21 @@ class SourceStatus(BaseModel):
     message: str | None = None
 
 
+class Capabilities(BaseModel):
+    """Runtime report of configured sources and optional metric families."""
+
+    observed_at: datetime
+    service: str
+    version: str
+    scope: Literal["cluster"] = "cluster"
+    namespace: str
+    read_only: bool = True
+    sources: dict[str, str]
+    metrics: dict[str, str]
+    llm: dict[str, str | bool | None]
+    limits: dict[str, int]
+
+
 class ContainerStatus(BaseModel):
     name: str
     container_id: str | None = None

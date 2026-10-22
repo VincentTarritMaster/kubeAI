@@ -38,11 +38,21 @@ class LiveClusterTests(unittest.TestCase):
             time.sleep(5)
         actual = json.loads(self.kubectl("get", "pods", "-n", "kubeai", "-o", "json"))["items"]
         self.assertEqual({p["uid"] for p in result["pods"]}, {p["metadata"]["uid"] for p in actual})
-        self.assertEqual(result["data_status"], "complete", result["warnings"])
+        # La pile par défaut ne scrape pas cAdvisor : data_status peut être
+        # partial et les métriques conteneur absentes. On l'accepte, mais on
+        # vérifie les valeurs dès qu'elles sont annoncées disponibles.
+        self.assertIn(result["data_status"], {"complete", "partial"}, result["warnings"])
+        self.assertIn(result["sources"]["mimir"]["status"], {"ok", "partial", "unavailable"})
         for item in result["pods"]:
-            if item["health"] == "healthy":
-                self.assertGreaterEqual(item["metrics"]["cpu_cores"], 0)
-                self.assertGreater(item["metrics"]["memory_working_set_bytes"], 0)
+            if item["health"] != "healthy":
+                continue
+            metrics = item["metrics"]
+            if metrics["status"] == "available":
+                self.assertGreaterEqual(metrics["cpu_cores"], 0)
+                self.assertGreater(metrics["memory_working_set_bytes"], 0)
+            else:
+                self.assertIsNone(metrics["cpu_cores"])
+                self.assertIsNone(metrics["memory_working_set_bytes"])
         print(json.dumps({"health": result["health"], "summary": result["summary"],
                           "pods": [{"name": p["name"], "metrics": p["metrics"]} for p in result["pods"]]}, indent=2))
 

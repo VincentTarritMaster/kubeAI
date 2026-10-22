@@ -61,7 +61,9 @@ def missing_summary(items: list[str], *, limit: int = 3) -> str:
               "kubernetes_pods": "inventaire Kubernetes incomplet",
               "kubernetes": "données Kubernetes indisponibles",
               "mimir": "métriques Mimir indisponibles",
-              "loki": "logs Loki indisponibles"}
+              "loki": "logs Loki indisponibles",
+              "taux d'erreurs HTTP 5xx absent sur cette fenêtre": "taux d'erreurs HTTP non mesuré",
+              "latence HTTP p95 absente sur cette fenêtre": "latence HTTP p95 non mesurée"}
     selected = []
     for item in items:
         if "aucun événement pertinent conservé" in item:

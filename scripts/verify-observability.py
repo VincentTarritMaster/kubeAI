@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Vérifier la collecte réelle dans Mimir et Loki, avec kubectl et Python 3."""
+"""Vérifier la collecte réelle dans Mimir et Loki, avec kubectl et Python 3.
+
+La pile kubeAI collecte kube-state-metrics et, sur opt-in, les pods annotés.
+cAdvisor n'est pas scrapé par défaut : les métriques CPU/mémoire des
+conteneurs sont alors absentes. Le script vérifie donc KSM et Loki, et
+signale explicitement l'absence de cAdvisor. Utiliser
+``--require-container-metrics`` pour en faire une exigence bloquante.
+"""
 
 import argparse
 import json
@@ -17,6 +24,10 @@ def main():
     parser.add_argument("--namespace", default="kubeai")
     parser.add_argument("--pod", help="Pod existant ; sinon un pod temporaire est créé puis supprimé")
     parser.add_argument("--timeout", type=int, default=180, help="Attente de la collecte en secondes")
+    parser.add_argument(
+        "--require-container-metrics", action="store_true",
+        help="Échouer si cAdvisor n'est pas scrapé (CPU/mémoire des conteneurs indisponibles)",
+    )
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout doit être positif")
@@ -41,13 +52,19 @@ def main():
             raise RuntimeError(f"{service} : {response}")
         return response["data"]["result"]
 
-    def metric(query):
+    def optional_metric(query):
         results = api("mimir", 9009, "prometheus/api/v1/query", {"query": query})
         if not results:
-            raise RuntimeError(f"Métrique encore absente : {query}")
+            return None
         value = float(results[0]["value"][1])
         if not math.isfinite(value):
             raise RuntimeError(f"Métrique non exploitable : {query}")
+        return value
+
+    def metric(query):
+        value = optional_metric(query)
+        if value is None:
+            raise RuntimeError(f"Métrique encore absente : {query}")
         return value
 
     created = False
@@ -96,15 +113,32 @@ def main():
         last_error = ""
         while True:
             try:
-                # Ne pas accepter un ancien échantillon si le collecteur s'est arrêté.
-                for job in ("kubernetes-cadvisor", "kube-state-metrics"):
-                    selector = f'up{{job="{job}"}}'
-                    if metric(f"min({selector})") != 1:
-                        raise RuntimeError(f"Collecte en échec : {job}")
-                    if metric(f"time() - min(timestamp({selector}))") > 60:
-                        raise RuntimeError(f"Collecte périmée : {job}")
-                memory = metric(f"sum(container_memory_working_set_bytes{{{containers}}})")
-                cpu = metric(f"sum(rate(container_cpu_usage_seconds_total{{{containers}}}[2m]))")
+                # kube-state-metrics est la source d'état toujours attendue.
+                job = "kube-state-metrics"
+                selector = f'up{{job="{job}"}}'
+                if metric(f"min({selector})") != 1:
+                    raise RuntimeError(f"Collecte en échec : {job}")
+                if metric(f"time() - min(timestamp({selector}))") > 60:
+                    raise RuntimeError(f"Collecte périmée : {job}")
+
+                # cAdvisor est optionnel : la pile par défaut ne le scrape pas.
+                cadvisor_up = optional_metric('sum(up{job="kubernetes-cadvisor"})')
+                if cadvisor_up is not None and cadvisor_up < 1:
+                    raise RuntimeError("Collecte en échec : kubernetes-cadvisor (up=0)")
+                cadvisor_metrics = cadvisor_up is not None and cadvisor_up >= 1
+                if cadvisor_metrics:
+                    if metric('time() - min(timestamp(up{job="kubernetes-cadvisor"}))') > 60:
+                        raise RuntimeError("Collecte périmée : kubernetes-cadvisor")
+                    memory = metric(f"sum(container_memory_working_set_bytes{{{containers}}})")
+                    cpu = metric(f"sum(rate(container_cpu_usage_seconds_total{{{containers}}}[2m]))")
+                elif args.require_container_metrics:
+                    raise RuntimeError(
+                        "Métriques conteneur absentes : le job kubernetes-cadvisor n'est pas scrapé. "
+                        "Activez cAdvisor ou retirez --require-container-metrics."
+                    )
+                else:
+                    memory = cpu = None
+
                 restarts = metric(f"sum(kube_pod_container_status_restarts_total{{{labels}}})")
                 ready = metric(f'sum(kube_pod_status_ready{{{labels},condition="true"}})')
                 if ready < 1:
@@ -120,17 +154,27 @@ def main():
                 entries = [entry for stream in streams for entry in stream.get("values", [])]
                 if not entries:
                     raise RuntimeError("Loki n'a pas encore reçu les logs du pod")
+                sources = ["Mimir via Alloy/kube-state-metrics"]
+                if cadvisor_metrics:
+                    sources.append("Mimir via Alloy/cAdvisor")
+                sources.append("Loki via Alloy")
                 report = {
                     "status": "success", "context": args.context,
                     "namespace": args.namespace, "pod": pod_name,
-                    "cpu_cores": round(cpu, 6),
-                    "memory_working_set_MiB": round(memory / 1048576, 2),
+                    "container_metrics": "available" if cadvisor_metrics else "unavailable",
+                    "cpu_cores": round(cpu, 6) if cpu is not None else None,
+                    "memory_working_set_MiB": round(memory / 1048576, 2) if memory is not None else None,
                     "restarts": int(restarts), "ready": True,
                     "log_sample": entries[0][1],
                     "log_timestamp_ns": entries[0][0],
-                    "sources": ["Mimir via Alloy/cAdvisor/kube-state-metrics", "Loki via Alloy"],
+                    "sources": sources,
                     "temporary_pod": created,
                 }
+                if not cadvisor_metrics:
+                    report["warning"] = (
+                        "cAdvisor n'est pas scrapé : CPU/mémoire des conteneurs indisponibles. "
+                        "Utilisez --require-container-metrics pour rendre cette absence bloquante."
+                    )
                 print(json.dumps(report, indent=2, ensure_ascii=False))
                 break
             except (RuntimeError, subprocess.TimeoutExpired) as error:

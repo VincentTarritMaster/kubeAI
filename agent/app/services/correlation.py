@@ -66,6 +66,7 @@ def assess(report, metrics):
     cpu_limits = _points(metrics, "cpu_limit_cores", namespace, pod)
     memory_limits = _points(metrics, "memory_limit_bytes", namespace, pod)
     latency = _points(metrics, "http_latency_p95_seconds", namespace, pod)
+    error_ratio = _points(metrics, "http_error_ratio", namespace, pod)
     resource = f"{namespace}/{pod}"
     logs = [e for e in report["timeline"] if e["source"] == "Loki" and e["resource"] == resource]
     events = [e for e in report["timeline"] if e["source"] == "Kubernetes" and e["resource"] == resource]
@@ -73,7 +74,8 @@ def assess(report, metrics):
     limitations = []
     if not latency:
         limitations.append("Aucune métrique de latence HTTP NestJS n'est collectée par la configuration active.")
-    limitations.append("Aucun taux d'erreurs HTTP applicatif n'est collecté par la configuration active.")
+    if not error_ratio:
+        limitations.append("Aucun taux d'erreurs HTTP applicatif n'est collecté par la configuration active.")
     if not restarts:
         limitations.append("Aucune série historique de redémarrages disponible ; le cumul actuel ne date pas un incident.")
     if not cpu_limits:
@@ -111,12 +113,33 @@ def assess(report, metrics):
         log_time = datetime.fromisoformat(log["timestamp"].replace("Z", "+00:00")).timestamp()
         event = next((e for e in network_events if _near(
             datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")).timestamp(), log_time)), None)
+        http_signal = next((p for p in error_ratio
+                            if _near(p.timestamp, log_time) and p.value >= 0.2), None)
+        proof = [_evidence(log)]
+        if event:
+            proof.append(_evidence(event))
+        if http_signal:
+            proof.append(_point_evidence(report, "http_error_ratio", http_signal.timestamp))
+        if event and http_signal:
+            confidence = "étayée par log, événement et erreurs HTTP, causalité non prouvée"
+        elif event:
+            confidence = "étayée par log et événement, causalité non prouvée"
+        elif http_signal:
+            confidence = "étayée par log et erreurs HTTP, causalité non prouvée"
+        else:
+            confidence = "preuves insuffisantes"
+        contradictions = []
+        if not event:
+            contradictions.append("Aucun événement réseau corroborant le log dans cinq minutes.")
+        if http_signal:
+            contradictions.append("La hausse des 5xx peut aussi provenir d'une erreur applicative locale.")
+        description = ("Défaillance de connexion possible pendant l'intervalle étudié, "
+                       "avec erreurs HTTP 5xx associées." if http_signal else
+                       "Défaillance de connexion possible pendant l'intervalle étudié.")
         hypotheses.append(_hypothesis(
-            "connectivity", "Défaillance de connexion possible pendant l'intervalle étudié.",
-            [_evidence(log), _evidence(event) if event else None], report,
-            "étayée par log et événement, causalité non prouvée" if event else "preuves insuffisantes",
+            "connectivity", description, proof, report, confidence,
             ["Service distant indisponible", "Erreur applicative locale", "Latence réseau non mesurée"],
-            [] if event else ["Aucun événement réseau corroborant le log dans cinq minutes."],
+            contradictions,
             ["Comparer les logs du service appelé et les événements réseau, sans modifier le cluster."]))
 
     if cpu and cpu_limits and latency and len(latency) >= 2:
@@ -189,6 +212,41 @@ def assess(report, metrics):
     if app_cpu:
         limitations.append("process_cpu_seconds_total mesure le temps CPU du processus ; son taux n'est ni le CPU global du conteneur ni un pourcentage de sa limite.")
 
+    anomaly_marker = next((e for e in incident_markers if re.search(
+        r"\bphase\s*=\s*anomaly_start\b", e["observation"], re.I)), None)
+    if anomaly_marker and error_ratio:
+        start = datetime.fromisoformat(anomaly_marker["timestamp"].replace("Z", "+00:00")).timestamp()
+        before = next((p for p in reversed(error_ratio)
+                       if p.timestamp < start and start - p.timestamp <= 300), None)
+        during = [p for p in error_ratio if start <= p.timestamp <= start + 600]
+        peak = max(during, key=lambda p: p.value, default=None)
+        if peak and peak.value >= 0.2 and (
+                before is None or peak.value >= max(before.value * 2, before.value + 0.1)):
+            proof = [_evidence(anomaly_marker),
+                     _point_evidence(report, "http_error_ratio", peak.timestamp)]
+            if before:
+                proof.append(_point_evidence(report, "http_error_ratio", before.timestamp))
+            latency_before = next((p for p in reversed(latency)
+                                   if p.timestamp < start and start - p.timestamp <= 300), None)
+            latency_during = max(
+                (p for p in latency if start <= p.timestamp <= start + 600),
+                key=lambda p: p.value, default=None)
+            if latency_before and latency_during:
+                proof.extend([
+                    _point_evidence(report, "http_latency_p95_seconds", latency_before.timestamp),
+                    _point_evidence(report, "http_latency_p95_seconds", latency_during.timestamp),
+                ])
+            hypotheses.append(_hypothesis(
+                "demo_http_errors",
+                "Hausse du taux d'erreurs HTTP 5xx pendant la fenêtre d'anomalie signalée dans les logs.",
+                proof, report, "limitée : association temporelle, causalité non prouvée",
+                ["Dépendance externe indisponible", "Erreur applicative locale", "Trafic de démonstration"], [],
+                ["Comparer les logs du service appelé et les compteurs d'erreurs sur la même fenêtre."]))
+        elif peak:
+            limitations.append("Taux d'erreurs HTTP mesuré sans hausse nette pendant la fenêtre d'anomalie.")
+    elif anomaly_marker and not error_ratio:
+        limitations.append("Marqueur d'anomalie présent, mais aucune série http_requests_total pour mesurer les erreurs HTTP.")
+
     if cpu and cpu_limits and not latency and not marker:
         high = next((p for p in cpu if any(_near(p.timestamp, lim.timestamp) and lim.value > 0
                                          and p.value >= 0.8 * lim.value for lim in cpu_limits)), None)
@@ -228,6 +286,7 @@ def assess(report, metrics):
 def render(report, model_note, *, zone=DEFAULT_ZONE):
     resource = f"{report['namespace']}/{report['pod']}"
     primary = report["hypotheses"][0] if report["hypotheses"] else None
+    http_hypothesis = next((h for h in report["hypotheses"] if h["id"] == "demo_http_errors"), None)
     supported = primary["supporting_observations"] if primary else []
     signal = next((item for item in supported if item["source"] == "Loki" and
                    re.search(r"\bphase\s*=\s*anomaly_start\b", item["observation"], re.I)), None)
@@ -236,7 +295,14 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
                        re.search(r"\bphase\s*=\s*anomaly_start\b", item["observation"], re.I)), None)
     start_local, end_local = local_time(report["start"], zone), local_time(report["end"], zone)
     if primary:
-        proof_candidates = primary["supporting_observations"][:4]
+        if primary["id"] == "demo_http_errors":
+            proof_candidates = primary["supporting_observations"][:5]
+        else:
+            proof_candidates = primary["supporting_observations"][:4]
+        if http_hypothesis and primary["id"] != "demo_http_errors":
+            http_proofs = http_hypothesis["supporting_observations"]
+            proof_candidates += [p for p in http_proofs if "http_error_ratio" in p["reference"]][:1]
+            proof_candidates += [p for p in http_proofs if "http_latency_p95_seconds" in p["reference"]][:2]
     else:
         proof_candidates = []
         for source in ("Loki", "Mimir", "Kubernetes"):
@@ -248,6 +314,9 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
             proof_candidates.extend(item for item in report["timeline"]
                                     if item["resource"] == resource and item not in proof_candidates)
         proof_candidates = proof_candidates[:4]
+    proof_candidates = list({
+        (item["timestamp"], item["reference"]): item for item in proof_candidates
+    }.values())
     moments = [start_local, end_local] + [local_time(proof["timestamp"], zone) for proof in proof_candidates]
     if signal:
         moments.append(local_time(signal["timestamp"], zone))
@@ -274,10 +343,21 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
     else:
         lines.append("**Problème observé :** aucun début d'anomalie précis n'est établi par les marqueurs disponibles.")
     if primary:
-        relation = ("Les marqueurs de Loki encadrent le cycle d'anomalie et Mimir montre une hausse du CPU "
-                    "du processus pendant ce cycle." if primary["id"] == "demo_app_cpu" else primary["description"])
-        hypothesis = ("Une activité CPU accrue du processus a pu contribuer à l'incident ; "
-                      "le lien causal reste à vérifier." if primary["id"] == "demo_app_cpu" else primary["description"])
+        if primary["id"] == "demo_app_cpu":
+            relation = ("Les marqueurs de Loki encadrent le cycle d'anomalie et Mimir montre une hausse du CPU "
+                        "du processus pendant ce cycle.")
+            if http_hypothesis:
+                relation += (" Mimir mesure aussi une hausse du taux d'erreurs HTTP 5xx pendant ce cycle.")
+            hypothesis = ("Une activité CPU accrue du processus a pu contribuer à l'incident ; "
+                          "le lien causal reste à vérifier.")
+        elif primary["id"] == "demo_http_errors":
+            relation = ("Les marqueurs de Loki encadrent une hausse du taux d'erreurs HTTP 5xx "
+                        "mesurée dans Mimir.")
+            hypothesis = ("Une dépendance ou une erreur applicative a pu provoquer ces 500 ; "
+                          "le lien causal reste à vérifier.")
+        else:
+            relation = primary["description"]
+            hypothesis = primary["description"]
         lines += ["", "**Corrélation :** " + relation,
                   "Les sources coïncident dans la fenêtre examinée ; cette proximité ne démontre pas la cause.",
                   "", f"**Hypothèse principale :** {hypothesis}",
@@ -324,6 +404,22 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
             lines.append("- Comparer le CPU du processus, la limite du conteneur et les métriques de throttling sur la même fenêtre.")
     if any("process_cpu_seconds_total" in limit for limit in report["correlation_limits"]):
         lines += ["", "La mesure CPU du processus ne permet pas d'affirmer une saturation ou un throttling du conteneur."]
+    others = report["hypotheses"][1:]
+    if others:
+        lines += ["", "**Autres hypothèses calculées :**"]
+        for item in others:
+            proofs = item["supporting_observations"]
+            if item["id"] == "demo_http_errors":
+                proof = next((p for p in proofs if "http_error_ratio" in p["reference"]),
+                             proofs[0] if proofs else None)
+            elif item["id"] == "connectivity":
+                proof = next((p for p in proofs if "connection refused" in p["observation"].lower()),
+                             proofs[0] if proofs else None)
+            else:
+                proof = proofs[0] if proofs else None
+            evidence = f" Preuve : {readable_observation(proof)}" if proof else ""
+            lines.append(f"- `{item['id']}` : {item['description']} "
+                         f"(confiance : {item['confidence']}).{evidence}")
     if report["missing"] or report["correlation_limits"]:
         lines += ["", "**Données manquantes :** " + missing_summary(
             report["missing"] + report["correlation_limits"], limit=2) + "."]
@@ -374,8 +470,8 @@ async def correlate(service, chat):
                 data={"hypotheses": candidates}, key="priority",
                 options=tuple(h["id"] for h in report["hypotheses"]) + ("none",))
             if priority in {h["id"] for h in report["hypotheses"]}:
-                report["hypotheses"].sort(key=lambda h: h["id"] != priority)
-                model_note = f"{provider_name} a sélectionné la priorité {priority} parmi les hypothèses calculées ; aucun fait supplémentaire n'a été retenu."
+                model_note = (f"{provider_name} a sélectionné la priorité {priority} parmi les "
+                              "hypothèses calculées ; l'ordre déterministe des preuves est conservé.")
             elif priority == "none":
                 model_note = f"{provider_name} a répondu ; aucune hypothèse n'a été priorisée. Diagnostic déterministe conservé."
             else:

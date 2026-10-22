@@ -81,6 +81,36 @@ class PrometheusClient:
             raise UpstreamError("mimir", "Invalid Mimir sample") from error
         return samples, warnings
 
+    async def reachable(self, timestamp: float) -> str:
+        """Cheap availability probe used by the capabilities report."""
+        try:
+            await self._query("vector(1)", timestamp)
+            return "available"
+        except UpstreamError:
+            return "unavailable"
+
+    async def job_status(self, job: str, timestamp: float) -> str:
+        """Report a known scrape job without exposing an arbitrary PromQL API."""
+        if job not in {"kube-state-metrics", "kubernetes-cadvisor", "kubernetes-pods-annotated"}:
+            raise ValueError("Unsupported scrape job")
+        try:
+            samples, _ = await self._query(f"min(up{{job={json.dumps(job)}}})", timestamp)
+        except UpstreamError:
+            return "unknown"
+        if not samples:
+            return "unavailable"
+        return "available" if samples[0].value == 1 else "degraded"
+
+    async def metric_present(self, metric: str, timestamp: float) -> bool:
+        """Check one allowlisted optional metric family over the last hour."""
+        if metric != "http_requests_total":
+            raise ValueError("Unsupported metric")
+        try:
+            samples, _ = await self._query(f"count(last_over_time({metric}[1h]))", timestamp)
+        except UpstreamError:
+            return False
+        return bool(samples and samples[0].value > 0)
+
     async def snapshot(self, timestamp: float):
         selector = f'job="kubernetes-cadvisor",namespace={json.dumps(self.settings.namespace)},container!="",container!="POD"'
         cpu = f"container_cpu_usage_seconds_total{{{selector}}}"
@@ -148,6 +178,17 @@ class PrometheusClient:
                 "restart_count": f'sum by (namespace,pod) (kube_pod_container_status_restarts_total{{{target_selector}}})',
                 "cpu_limit_cores": f'sum by (namespace,pod) (kube_pod_container_resource_limits{{{target_selector},resource="cpu",unit="core"}})',
                 "memory_limit_bytes": f'sum by (namespace,pod) (kube_pod_container_resource_limits{{{target_selector},resource="memory",unit="byte"}})',
+                # Optional application HTTP instrumentation. The series are
+                # absent for applications that do not expose them; the caller
+                # reports that absence instead of inventing a latency.
+                "http_error_ratio": (
+                    f'sum by (namespace,pod) (rate(http_requests_total{{{target_selector},status=~"5.."}}[1m]))'
+                    f' / clamp_min(sum by (namespace,pod) (rate(http_requests_total{{{target_selector}}}[1m])), 0.001)'
+                ),
+                "http_latency_p95_seconds": (
+                    'histogram_quantile(0.95, sum by (le,namespace,pod) '
+                    f'(rate(http_request_duration_seconds_bucket{{{target_selector}}}[1m])))'
+                ),
             })
         step = max(self.MIN_STEP_SECONDS,
                    math.ceil((end - start) / max(1, self.MAX_POINTS // len(queries) - 1)))

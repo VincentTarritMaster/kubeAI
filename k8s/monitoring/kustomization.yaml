@@ -4,6 +4,7 @@ namespace: monitoring
 resources:
   - namespace.yaml
   - rbac.yaml
+  - rbac-cadvisor.yaml
   - mimir.yaml
   - loki.yaml
   - alloy.yaml

@@ -230,8 +230,8 @@ déclarent. Open WebUI n'a aucune requête/limite mémoire configurée ; le tota
 limites n'est donc pas un plafond pour l'ensemble du projet. Kubernetes, Docker,
 Minikube, le système hôte et la mémoire des volumes s'ajoutent à ces valeurs.
 Le Mimir actif réserve à lui seul 1 Gi et est limité à 2 Gi. Le manifeste
-Prometheus historique est exclu de Kustomize actif; Grafana et Tempo ne sont
-pas déployés. Aucun profil local d'inférence n'est déployé dans Kubernetes.
+Prometheus historique est exclu de Kustomize actif ; Grafana n'est pas déployé
+et Tempo est hors périmètre. Aucun profil local d'inférence n'est déployé dans Kubernetes.
 
 Le profil Apertus documente une consommation estimée de 7 à 10 Go selon le
 contexte et les buffers, en sus de l'environnement de conteneurs. Cela dépasse
@@ -241,10 +241,13 @@ de consommation n'a été collecté dans cette étape.
 
 ## Évolution des profils dans l'architecture kubeAI
 
-- Le PDF reste inchangé et reste une référence de conception. L'application
-  livrée utilise un FastAPI commun ; LangChain n'est pas intégré.
+- Le PDF initial est archivé dans `docs/archive/` ; il reste une référence de
+  conception. L'application livrée utilise un FastAPI commun ; LangChain n'est
+  pas intégré.
 - La pile de collecte active est Alloy → Mimir + Loki. Prometheus autonome est
-  conservé hors du rendu Kustomize; Grafana et Tempo restent à faire.
+  conservé hors du rendu Kustomize ; Grafana reste optionnel et Tempo est hors
+  périmètre. Alloy scrape aussi cAdvisor via le proxy de l'API Kubernetes, avec
+  `list/watch` sur les nœuds et `get` sur `nodes/proxy`.
 - L'agent utilise Kubernetes, Mimir et Loki par clients directs. Il ne fournit
   pas de remédiation, d'exécution distante ni d'accès au contenu des Secrets.
 - Le défaut est Mistral API ; l'option Apertus conserve l'apport local de Vincent.

@@ -173,13 +173,13 @@ la capacité du modèle peut nécessiter une nouvelle conversation plus courte.
 L'agent ne modifie aucun workload. Les logs sont traités comme des données ; le
 prompt demande au modèle de distinguer observations et hypothèses. Ces consignes
 ne garantissent pas l'exactitude des réponses : les preuves restent accessibles
-dans `/diagnose`. Les événements Kubernetes et les requêtes d'investigation
-arbitraires ne sont pas encore intégrés.
+dans `/diagnose`. Les événements Kubernetes et l'investigation historique sont
+intégrés ; les traces distribuées et Tempo restent hors périmètre.
 
-Le profil garde Open WebUI sans authentification et les services internes sur
-un cluster local de confiance. Pour le cloud, prévoir un autre profil avec
-authentification, TLS et politiques réseau. Le modèle local est sur le Mac,
-pas dans Kubernetes.
+Le déploiement actif active l'authentification Open WebUI (`WEBUI_AUTH=True`,
+rôle `pending` par défaut) et garde les services internes sur un cluster local de
+confiance. Pour le cloud, prévoir TLS, politiques réseau et un contrôle d'accès
+adapté. Le modèle local est sur le Mac, pas dans Kubernetes.
 Une autre machine peut héberger un serveur compatible et remplacer `LLM_BASE_URL`,
 `LLM_MODEL` et le Secret, sans changer la connexion Open WebUI à l'agent.
 

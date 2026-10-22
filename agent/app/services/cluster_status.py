@@ -329,3 +329,55 @@ class ClusterStatusService:
             observed_at=observed_at, health=health, data_status=data_status, summary=summary,
             sources=sources, warnings=warnings, nodes=nodes, pods=pods, events=events,
         )
+
+    async def capabilities(self) -> dict:
+        """Report configured sources and optional metric families without calling the LLM."""
+        observed_at = datetime.now(timezone.utc)
+        timestamp = observed_at.timestamp()
+        mimir, ksm, cadvisor, app_http = await asyncio.gather(
+            self.prometheus.reachable(timestamp),
+            self.prometheus.job_status("kube-state-metrics", timestamp),
+            self.prometheus.job_status("kubernetes-cadvisor", timestamp),
+            self.prometheus.metric_present("http_requests_total", timestamp),
+        )
+        settings = self.kubernetes.settings
+        if settings.llm_provider == "mistral-api":
+            try:
+                llm_configured = bool(settings.llm_key())
+            except (OSError, UnicodeError):
+                llm_configured = False
+        else:
+            # Local servers may not require a key; this only says the profile is
+            # selected, not that the endpoint is reachable.
+            llm_configured = True
+        return {
+            "observed_at": observed_at,
+            "service": "kubeai-agent",
+            "version": "0.3.0",
+            "scope": "cluster",
+            "namespace": settings.namespace,
+            "read_only": True,
+            "sources": {
+                "kubernetes": "configured",
+                "mimir": mimir,
+                "loki": "configured",
+            },
+            "metrics": {
+                "kube_state_metrics": ksm,
+                "cadvisor": cadvisor,
+                "application_http": "available" if app_http else "unavailable",
+            },
+            "llm": {
+                "provider": settings.llm_provider,
+                "model": settings.llm_model,
+                "configured": llm_configured,
+            },
+            "limits": {
+                "observation_pods": 20,
+                "log_lines": 12,
+                "log_pods": 6,
+                "history_messages": 32,
+                "history_characters": 16000,
+                "max_completion_tokens": 1024,
+            },
+        }

@@ -13,11 +13,15 @@ Les choix de déploiement au-delà de cette démonstration restent à valider en
 | Connexion Open WebUI | API compatible OpenAI de l'agent, modèle virtuel `kubeai` et alias historique `kubeai-apertus` ; collecte avant chaque génération |
 | Région et données sensibles | Décision du groupe en attente ; ne transmettre que des données synthétiques ou autorisées avant validation |
 | Collecte du tronc commun | Mimir monolithique 3.2.1, Loki 3.7.8, Alloy 1.20.1, kube-state-metrics 2.20.0 ; manifests Kustomize sans Helm |
+| Métriques conteneurs | cAdvisor scrapé via le proxy de l'API Kubernetes (`job="kubernetes-cadvisor"`). Alloy reçoit `list/watch` sur les nœuds et `get` sur `nodes/proxy` ; `/cluster/status` renseigne CPU/mémoire. Ce droit élargit le RBAC mais reste en lecture seule. |
+| Traces / Tempo | Hors périmètre : le professeur a demandé de ne pas y consacrer le temps restant. |
+| Alertes | Non intégrées : aucun Alertmanager ni règles d’alerte déployées. `/capabilities` et A exposent `alerts=not_configured`. |
+| Démonstration C | Le pod synthétique expose CPU, erreurs 5xx, latence HTTP et un log `connection refused` ; les hypothèses `demo_http_errors` et `connectivity` sont calculées avant toute priorisation LLM. Les preuves sont synthétiques. |
 | Stockage et rétention | PVC Mimir 10 Gio sans purge automatique des blocs (`0s`), Loki 2 Gio avec rétention et fenêtre de recherche de 30 jours, Alloy 1 Gio ; aucun nettoyage automatique d'éventuels anciens PVC Prometheus |
 | API métrique | `MIMIR_URL=http://mimir.monitoring.svc:9009/prometheus` ; client `PrometheusClient` et PromQL conservés ; `PROMETHEUS_URL` en repli |
 | Transition Prometheus → Mimir | Aucun serveur autonome dans le rendu ; manifests hérités retirés ; transition d'un cluster existant après validation, sans suppression automatique de ressources ou PVC |
 | Poste Windows 8 Go | Essais Kubernetes, Mimir et Open WebUI réalisés ; le démarrage complet reste soumis à la RAM libre vérifiée par les scripts |
-| Déploiement cloud | Étape ultérieure ; non implémentée dans l'intégration statique Mimir |
+| Déploiement cloud | Non implémenté à ce stade ; cible cloud et manifests à définir. |
 | Droits RBAC de l’agent | `ClusterRole` : `list` uniquement sur `nodes`, `pods`, `events` ; aucun Secret, `exec` ou verbe de modification ; logs via Loki |
 | Remédiation automatique ou recommandations uniquement | L'agent actuel recommande des vérifications en lecture seule ; aucune remédiation automatique n'est implémentée |
 
@@ -29,10 +33,12 @@ Les choix de déploiement au-delà de cette démonstration restent à valider en
 - Les limites et la configuration Mimir suivent le schéma 3.2.1 (`target: all`,
   `ingestion_rate` et `ingestion_burst_size`). Les anciennes valeurs Helm et les
   configurations Mimir 3.x rejetées ne sont pas des configurations de référence.
-- Alloy collecte les métriques de nœuds et de kube-state-metrics, les logs via
-  l'API Kubernetes et, sur opt-in, les métriques des pods `kubeai` Running portant
+- Alloy collecte les métriques de kube-state-metrics, les logs via l'API
+  Kubernetes et, sur opt-in, les métriques des pods `kubeai` Running portant
   `prometheus.io/scrape: "true"` et `prometheus.io/port`. Le scrape applicatif
-  utilise un intervalle de 30 s et écrit vers la même destination Mimir.
+  utilise un intervalle de 30 s et écrit vers la même destination Mimir. Alloy
+  scrape aussi cAdvisor via le proxy de l'API Kubernetes ; son ServiceAccount
+  possède `list/watch` sur les nœuds et `get` sur `nodes/proxy`, en lecture seule.
 - Les comptes de service et leurs RBAC sont gérés dans Kustomize ; ne pas
   combiner cette gestion avec celle d'un chart Helm pour les mêmes ressources.
 

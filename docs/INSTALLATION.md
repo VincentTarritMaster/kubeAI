@@ -14,6 +14,9 @@ Lancez les commandes depuis la racine du dépôt dans PowerShell 5.1 ou 7.
   kube-state-metrics et Open WebUI (768 Mio). Le script bloque WebUI sous
   **0,5 Gio de RAM libre** avant et après son déploiement.
 - Ports locaux 9009, 3100, 8000 et 8080 libres.
+- cAdvisor est scrapé par Alloy via le proxy de l’API Kubernetes ; le
+  ServiceAccount `alloy` reçoit `list/watch` sur les nœuds et `get` sur
+  `nodes/proxy` (voir `k8s/monitoring/rbac-cadvisor.yaml`).
 - Pour Mistral : clé API personnelle. Pour le profil local : serveur déjà
   installé et lancé avec une API compatible OpenAI et un modèle listé par `/v1/models`.
   Aucun modèle n'est téléchargé ou lancé automatiquement.
@@ -49,9 +52,32 @@ le chemin du kubeconfig de lecture seule et la clé Bearer interne.
 .\scripts\start.ps1
 ```
 
+Si PowerShell refuse le script non signé, lancer uniquement ce processus avec :
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
+```
+
+Ne pas désactiver la politique pour toute la machine.
+
+Pour contrôler la collecte après le démarrage :
+
+```powershell
+python scripts\verify-observability.py --context docker-desktop --require-container-metrics
+Invoke-RestMethod http://127.0.0.1:8000/capabilities
+```
+
+`cadvisor` doit être `available` et le rapport doit afficher
+`container_metrics: available` avec un CPU/mémoire non nuls.
+
+Pour le pod de démonstration, lancer `scripts\run-demo-incident.ps1`, puis
+`python scripts\verify-demo-metrics.py --context docker-desktop`. Le détail des
+signaux est dans [`metrics.md`](metrics.md).
+
 Au premier lancement, `setup.ps1` crée `.venv`, installe
-`agent/requirements.txt`, applique les manifests de monitoring et le RBAC de
-l'agent, attend les déploiements et crée `kubeai-api-auth` seulement s'il manque.
+`agent/requirements.txt`, applique les manifests de monitoring (dont
+`rbac-cadvisor.yaml`), le RBAC de l'agent, attend les déploiements et crée
+`kubeai-api-auth` seulement s'il manque.
 Le script ne réinstalle les dépendances que si le fichier de dépendances change.
 Il ne lance pas le Deployment `kubeai-agent` : l'agent utilisé ici est FastAPI
 sur Windows. Le script démarre les tunnels Mimir/Loki, renouvelle le jeton du
@@ -95,7 +121,8 @@ composant de monitoring. Les journaux locaux se trouvent dans
 | Mistral indisponible | Vérifier la clé personnelle, le modèle et l'accès réseau. `/llm/status` utilise `/models`, sans génération. |
 | Modèle local indisponible | Démarrer le moteur séparément ; vérifier l'URL `/v1/models` et le nom exact du modèle. |
 | Pod en erreur | `kubectl --context docker-desktop -n monitoring get pods` ou `-n kubeai get pods`, puis `kubectl describe pod` et `kubectl logs`. |
+| cAdvisor indisponible | Vérifier `kubectl -n monitoring logs deployment/alloy --tail=80`, le ClusterRole `kubeai-alloy-cadvisor` et `kubectl auth can-i get nodes/proxy --as=system:serviceaccount:monitoring:alloy`. |
 | WebUI ne joint pas FastAPI | Vérifier `http://127.0.0.1:8000/ready`, la passerelle `host.docker.internal`, le pare-feu Windows et la connexion WebUI persistée. |
 
-Les vérifications locales ne prouvent pas les scénarios A/B/C en cluster.
-Pour ces démonstrations, suivre [`demo-scenarios.md`](demo-scenarios.md).
+Les tests automatisés restent simulés ; les scénarios réels et leurs limites
+sont décrits dans [`demo-scenarios.md`](demo-scenarios.md).

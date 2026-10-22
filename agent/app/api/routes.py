@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 
-from app.models import ClusterInventory, ClusterStatus
+from app.models import Capabilities, ClusterInventory, ClusterStatus
 
 router = APIRouter()
 
@@ -16,6 +16,16 @@ async def ready(request: Request):
     """Check pod access in the configured namespace. Mimir is optional."""
     await request.app.state.cluster_status.kubernetes.ready()
     return {"status": "ready"}
+
+
+@router.get("/capabilities", response_model=Capabilities, tags=["health"], operation_id="get_agent_capabilities")
+async def capabilities(request: Request):
+    """Report configured sources and optional metric families without calling the LLM.
+
+    This route never returns a key or an arbitrary upstream URL. It is intended
+    for operators who need to know why a metric is null before asking a question.
+    """
+    return await request.app.state.cluster_status.capabilities()
 
 
 @router.get(

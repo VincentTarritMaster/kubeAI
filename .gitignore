@@ -42,6 +42,8 @@ __pycache__/
 Thumbs.db
 tmp/
 temp/
+# CA temporaires écrits par le client Kubernetes à la racine.
+/tmp*
 dist/
 build/
 coverage/

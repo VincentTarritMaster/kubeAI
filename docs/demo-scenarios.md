@@ -54,8 +54,9 @@ ordonnés à l'heure suisse par défaut. Les marqueurs réels `normal`,
 applicatif retenu montre sa mesure de base et son pic lorsque les deux existent.
 Les observations UTC et références restent dans « Détails techniques / Preuves ».
 
-**Résultat réel rapporté :** l'équipe a obtenu une chronologie de 52 observations
-Mimir/Loki dans Open WebUI. Les événements Kubernetes ne sont inclus que s'ils
+**Résultat réel rapporté :** l'équipe a obtenu une chronologie de plus de 50
+observations Mimir/Loki dans Open WebUI (52 à 80 selon la fenêtre et
+l'activation de cAdvisor). Les événements Kubernetes ne sont inclus que s'ils
 ont effectivement été conservés et observés dans la fenêtre. Le statut ou les
 redémarrages actuels ne sont pas présentés comme des preuves historiques.
 
@@ -67,7 +68,7 @@ proximité entre deux observations ne prouve pas une causalité.
 
 Après B, poser dans le même fil :
 
-> Pour ce même incident, corrèle les logs et le CPU.
+> Pour ce même incident, corrèle les logs, le CPU et les erreurs HTTP.
 
 On peut aussi intercaler la question A, puis demander « Reprends l'incident précédent
 et corrèle ses logs et métriques ». « Pourquoi ? », « Quelles preuves ? » et « Et les
@@ -87,15 +88,28 @@ présente séparément :
 **Métrique CPU :** `process_cpu_seconds_total` représente le temps CPU du
 processus de démonstration. Son taux PromQL est exprimé en cœurs utilisés par
 le processus. Ce n'est ni le CPU total du conteneur ni un pourcentage de sa
-limite. La configuration actuelle n'utilise pas cAdvisor et n'accorde pas
-`nodes/proxy`. La mesure applicative dépend du scrape opt-in du pod annoté.
+limite. cAdvisor fournit en parallèle `container_cpu_usage_seconds_total` et
+`container_memory_working_set_bytes` pour les conteneurs ; les deux mesures
+restent distinctes.
+
+**Métriques HTTP :** le pod expose aussi `http_requests_total{status="200|500"}`
+et l'histogramme `http_request_duration_seconds`. Un trafic interne appelle
+`/work` toutes les 500 ms ; pendant `anomaly_start`, ces appels passent en 500
+avec une latence plus élevée, et le pod émet un log
+`KUBEAI_DEMO_DEPENDENCY connection refused` après une tentative réelle vers un
+port local fermé. Les appels reviennent à 200 après `recovered`. Le backend
+interroge le ratio d'erreurs 5xx et la latence p95 ; une hausse nette pendant
+l'anomalie produit l'hypothèse `demo_http_errors`, et le log de connexion peut
+renforcer l'hypothèse `connectivity`. Les applications non instrumentées n'ont
+pas ces séries et restent limitées aux autres signaux.
 
 **Résultat réel rapporté :** une hausse du CPU du processus a été associée dans
 le temps aux logs de l'anomalie ; l'équipe a obtenu des valeurs de l'ordre de
-0,0003 à 0,1002 cœur pour les échantillons comparés. Cette association soutient
-une hypothèse limitée, pas une preuve de causalité ni une mesure de saturation
-du conteneur. La cause demeure indéterminée si les autres preuves requises
-manquent.
+0,0003 à 0,1002 cœur pour les échantillons comparés. Le nouveau scénario HTTP
+ajoute un signal d'erreurs/latence corrélé aux mêmes marqueurs. Ces associations
+soutiennent des hypothèses limitées, pas une preuve de causalité ni une mesure
+de saturation du conteneur. La cause demeure indéterminée si les autres preuves
+requises manquent.
 
 ## Recréer des preuves réelles pour la soutenance
 
@@ -110,16 +124,28 @@ PowerShell depuis la racine du dépôt :
 
 ```powershell
 .\scripts\run-demo-incident.ps1
+python scripts\verify-demo-metrics.py --context docker-desktop
 ```
 
+Le second script vérifie `up{job="kubernetes-pods-annotated"}`, les compteurs
+HTTP, l'histogramme de latence, `process_cpu_seconds_total` et les marqueurs
+Loki. Il lit la dernière heure, donc il fonctionne même après la fin du pod.
+Voir [`metrics.md`](metrics.md) pour le détail des signaux.
+
 Le script attend la fin du scénario et affiche ses marqueurs UTC. Le pod mesure
-le CPU réel de son processus et se termine après environ quatre minutes. Il
-refuse de remplacer un scénario déjà en cours ; pour une exécution terminée,
-il remplace uniquement le pod exact de démonstration. Interroger B avec
-« Analyse l'incident du dernier script de démonstration » ou avec la date
-et les heures réellement affichées. Les requêtes A, B et C lisent ces données ;
-elles ne les créent pas. Le pod terminé reste disponible pour Alloy tant qu'il
-n'est pas remplacé.
+le CPU réel de son processus, expose des compteurs HTTP et se termine après
+environ quatre minutes. Il refuse de remplacer un scénario déjà en cours ; pour
+une exécution terminée, il remplace uniquement le pod exact de démonstration.
+Interroger B avec « Analyse l'incident du dernier script de démonstration » ou
+avec la date et les heures réellement affichées. Les requêtes A, B et C lisent
+ces données ; elles ne les créent pas. Le pod terminé reste disponible pour
+
+**Attention au fuseau :** les marqueurs affichés par le script sont en **UTC**,
+alors que l'interface Open WebUI affiche l'heure suisse (`Europe/Zurich`,
+UTC+2 le 22 octobre). `19:36 UTC` correspond à `21:36` en Suisse. Utiliser
+`23:36` revient à demander `21:36 UTC`, en dehors du scénario : la réponse
+« aucun début d'anomalie précis » est alors correcte.
+Alloy tant qu'il n'est pas remplacé.
 `stop.ps1` conserve les PVC de Loki, Mimir et Alloy ; les données restent
 interrogeables après redémarrage pendant leur rétention. Le PVC Loki fait 2 Gio,
 ce qui impose de surveiller son espace libre pendant les 30 jours.
@@ -128,8 +154,9 @@ ce qui impose de surveiller son espace libre pendant les 30 jours.
 
 Les faits, les requêtes, la chronologie et les hypothèses sont calculés par le
 backend avant la contribution facultative du modèle. Pour B, le modèle peut
-prioriser une source à vérifier ; pour C, il peut prioriser une hypothèse déjà
-calculée. Il ne crée aucun fait et ne transforme pas une coïncidence temporelle
+signaler une source à vérifier ; pour C, il peut signaler une hypothèse déjà
+calculée, mais l'ordre déterministe et toutes les hypothèses restent visibles.
+Il ne crée aucun fait et ne transforme pas une coïncidence temporelle
 en causalité. Le texte indique désormais distinctement si le modèle n'a pas été
 sollicité, si l'appel API/transport a échoué, si sa réponse a été rejetée faute
 de preuve ou si une priorité étayée a été retenue. Une erreur réelle n'est pas
@@ -160,11 +187,15 @@ Windows figurent dans le [README](../README.md).
 
 ## Limites communes
 
-- Le déploiement collecte les métriques Kubernetes par kube-state-metrics et
-  les métriques applicatives explicitement annotées. cAdvisor est désactivé ;
-  les métriques détaillées du CPU/mémoire des conteneurs peuvent donc manquer.
-- Aucune latence HTTP ni aucun taux d'erreur applicatif n'est déduit sans
-  instrumentation correspondante.
+- Le déploiement collecte les métriques Kubernetes par kube-state-metrics,
+  cAdvisor pour le CPU/mémoire des conteneurs et les métriques applicatives
+  explicitement annotées. Les exécutions antérieures à l'activation de cAdvisor
+  (22 octobre, environ 19:33 UTC) n'ont pas de séries conteneur ; relancer la
+  démo pour en générer.
+- Le pod de démonstration expose aussi des compteurs HTTP (`http_requests_total`)
+  et un histogramme de latence ; les applications non instrumentées n'ont ni
+  latence ni taux d'erreur exploitables.
+- Les traces distribuées et Tempo sont hors périmètre.
 - La rétention Loki/Mimir et celle des événements Kubernetes sont différentes.
   Des logs historiques peuvent subsister alors que les événements ont expiré.
 - Le cluster Docker Desktop et les composants de monitoring consomment une part

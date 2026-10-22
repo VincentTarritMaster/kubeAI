@@ -1,5 +1,10 @@
 # Validation conversationnelle — 20 octobre 2026
 
+> Rapport historique du 20 octobre 2026. Il indique 317 tests à cette date ;
+> l’état actuel comporte 359 tests, cAdvisor et des fenêtres de démonstration
+> plus récentes. Voir [README](../README.md) et
+> [validation-demo-http-2026-10-22.md](validation-demo-http-2026-10-22.md).
+
 ## Défauts reproduits
 
 - La formulation A fournie par l'utilisateur était routée vers B à cause du mot

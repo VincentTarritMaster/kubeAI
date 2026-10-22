@@ -1,5 +1,10 @@
 # Validation du socle kubeAI — étape 1
 
+> Rapport historique du 18 octobre 2026. Il décrit le socle initial (27 tests,
+> sans cAdvisor ni démonstrations complètes). L’état actuel comporte cAdvisor,
+> 359 tests automatisés et les scénarios A/B/C ; voir le
+> [README](../README.md) et [l’architecture](architecture.md).
+
 Projet collectif de Kevin, Vincent et Anass. Contrôle effectué le 18 octobre 2026, sous Windows, avec Python 3.12.1 et pytest 8.4.2.
 
 ## 1. Branche et commit de départ

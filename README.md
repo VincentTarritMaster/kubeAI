@@ -1,6 +1,6 @@
 # P5-G17 | KubeAI
 
-Projet collectif des 03 étudiants du groupe P5-G17 : un assistant d'observabilité
+Projet collectif des **3 étudiants** du groupe P5-G17 : un assistant d'observabilité
 Kubernetes qui répond à des questions de santé et d'incident à partir de
 preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`.
 
@@ -34,7 +34,9 @@ Au premier accès, créer son compte Open WebUI.
 Pour essayer B et C avec des preuves fraîches, lancer ensuite
 `.\scripts\run-demo-incident.ps1` depuis la racine, puis demander dans WebUI
 « Analyse l'incident du dernier script de démonstration » et
-« Pour ce même incident, corrèle les logs et les métriques CPU ».
+« Pour ce même incident, corrèle les logs, le CPU et les erreurs HTTP ».
+Après le scénario, `python scripts\verify-demo-metrics.py --context docker-desktop`
+vérifie les compteurs HTTP, la latence et les marqueurs dans Mimir/Loki.
 Une date locale sans année demande l'année ; une date et une plage précises
 restent strictement celles indiquées par l'utilisateur. Voir les
 [scénarios A/B/C](docs/demo-scenarios.md).
@@ -77,6 +79,11 @@ restent strictement celles indiquées par l'utilisateur. Voir les
    .\scripts\start.ps1
    ```
 
+   Si Windows PowerShell refuse le script non signé, utiliser uniquement pour
+   ce processus :
+   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1`.
+   Ne pas passer la politique machine en `Unrestricted`.
+
    Les dépendances et ressources manquantes sont initialisées, puis le navigateur
    s'ouvre sur <http://127.0.0.1:8080> après les contrôles de disponibilité.
    Sur une installation neuve, créer le premier compte administrateur WebUI.
@@ -101,17 +108,17 @@ vérifier sa connexion persistée et la passerelle `host.docker.internal`.
 Deux flux se rejoignent dans le backend :
 
 ```text
-Kubernetes ──> Grafana Alloy ── métriques ──> Mimir (PromQL) ──┐
-                                  logs ──────> Loki (LogQL) ────┼──> FastAPI
-Kubernetes API (lecture seule) ────────────────────────────────┘       │
-                                                                       ├──> Mistral API
-Open WebUI ── modèle virtuel kubeai ──────────────────────────────────┘     ou Apertus local
+Kubernetes ──> Grafana Alloy ── métriques (KSM, cAdvisor, pods annotés) ──> Mimir (PromQL) ──┐
+                                  logs ─────────────────────────────────────> Loki (LogQL) ────┼──> FastAPI
+Kubernetes API (lecture seule : nœuds, pods, événements) ─────────────────────────────────────┘       │
+                                                                                                      ├──> Mistral API
+Open WebUI ── modèle virtuel kubeai ─────────────────────────────────────────────────────────────────┘     ou Apertus local
 ```
 
 | Bloc | Responsabilité |
 |---|---|
 | Kubernetes | Exécute la pile et les scénarios de démonstration. |
-| Alloy | Collecte les métriques de kube-state-metrics et des pods annotés du namespace `kubeai`, puis les logs de ce namespace. |
+| Alloy | Collecte les métriques de kube-state-metrics, de cAdvisor (via le proxy de l'API Kubernetes) et des pods annotés du namespace `kubeai`, puis les logs de ce namespace. |
 | Mimir | Stocke les métriques et répond aux requêtes PromQL historiques. |
 | Loki | Stocke les logs consultés par LogQL. |
 | FastAPI | Orchestre l'inventaire en lecture seule, les requêtes Mimir/Loki, les diagnostics A/B/C et l'API compatible OpenAI. |
@@ -123,31 +130,42 @@ spécifiques sont décrites dans [`docs/architecture.md`](docs/architecture.md),
 [`docs/architecture-llm-profiles.md`](docs/architecture-llm-profiles.md),
 [`docs/mistral-api.md`](docs/mistral-api.md) et
 [`k8s/monitoring/README.md`](k8s/monitoring/README.md).
-Le document d'architecture fourni avec le sujet,
-[`docs/Group-17-Architecture.pdf`](docs/Group-17-Architecture.pdf), est conservé
-comme référence initiale.
+Le document d'architecture initial fourni avec le sujet est archivé dans
+[`docs/archive/Group-17-Architecture-initiale.pdf`](docs/archive/Group-17-Architecture-initiale.pdf).
+Il décrit la conception de départ, pas l’état livré ; l’architecture actuelle
+est dans [`docs/architecture.md`](docs/architecture.md).
 
 ## État du projet et démonstrations
 
 L'équipe a validé les démonstrations A/B/C depuis Open WebUI sur le cluster
-Docker Desktop : santé globale, chronologie d'incident avec 52 observations
-historiques Mimir/Loki, puis corrélation entre les marqueurs de scénario et la
-métrique CPU du processus applicatif. Consultez
+Docker Desktop : santé globale, chronologie d'incident avec 52 à 80 observations
+historiques Mimir/Loki selon la fenêtre, puis corrélation entre les marqueurs de
+scénario et les métriques CPU/HTTP du pod applicatif. Consultez
 [`docs/demo-scenarios.md`](docs/demo-scenarios.md) pour les questions, preuves,
-limites et étapes de reproduction. Les tests automatisés emploient des sources
-simulées et ne remplacent pas une validation du cluster.
+limites et étapes de reproduction. Les 359 tests automatisés et les 6 tests
+HTTP loopback passent ; les tests emploient des sources simulées et ne remplacent
+pas une validation du cluster. La page
+[`docs/metrics.md`](docs/metrics.md) détaille ce qui est réellement collecté ;
+la validation du 22 octobre est dans
+[`docs/validation-demo-http-2026-10-22.md`](docs/validation-demo-http-2026-10-22.md).
 
 ## Sécurité et limites
 
 - FastAPI lit les nœuds, pods et événements avec des permissions Kubernetes
   limitées aux verbes de lecture nécessaires (`list`). Il n'accède pas aux
   Secrets via l'API et ne modifie aucune ressource.
-- Alloy conserve des droits restreints. Aucun accès `nodes/proxy` ni scraping
-  cAdvisor n'est requis par la configuration actuelle.
+- Alloy scrape cAdvisor via le proxy de l'API Kubernetes. Cela nécessite
+  `list/watch` sur les nœuds et `get` sur `nodes/proxy` pour son ServiceAccount :
+  ce droit élargit la surface RBAC par rapport à la version précédente ; le
+  scrape n'utilise toutefois que `/metrics/cadvisor`. Les métriques
+  CPU/mémoire des conteneurs sont donc collectées ; `/cluster/status` peut
+  renseigner `cpu_cores` et `memory_working_set_bytes`. Voir
+  [`docs/metrics.md`](docs/metrics.md) et
+  [`k8s/monitoring/rbac-cadvisor.yaml`](k8s/monitoring/rbac-cadvisor.yaml).
 - Les logs sont lus dans Loki ; les métriques proviennent de Mimir. Les séries
   applicatives sont collectées par opt-in via annotations Prometheus dans
   `kubeai`. Sans instrumentation, la latence HTTP et les erreurs applicatives
-  restent inconnues.
+  restent inconnues. Les traces distribuées et Tempo sont hors périmètre.
 - `process_cpu_seconds_total` décrit le temps CPU consommé par le processus.
   Ce n'est ni le CPU total du conteneur ni un pourcentage de sa limite.
 - A/B/C distinguent les faits horodatés, les hypothèses et les données absentes.
@@ -162,6 +180,9 @@ simulées et ne remplacent pas une validation du cluster.
 - Les événements Kubernetes ont une rétention limitée et les séries Mimir
   dépendent de leur durée de rétention. Une absence de données n'est jamais
   interprétée comme une valeur nulle ou un état sain.
+- Le déploiement cloud, les alertes et Grafana ne sont pas encore implémentés.
+  Les traces distribuées et Tempo sont hors périmètre. Voir
+  [`CONFORMITE-EXIGENCES.md`](CONFORMITE-EXIGENCES.md).
 
 ## Préparation de l'environnement
 
@@ -245,7 +266,7 @@ ressources requises par l'agent. Vérifier les permissions sans imprimer les
 credentials :
 
 ```powershell
-$KubeConfig = "$env:USERPROFILE\.kube\kubeai-readonly"
+$KubeConfig = "$env:USERPROFILE\.kube\kubeai-readonly.yaml"
 kubectl --kubeconfig $KubeConfig --context kubeai-readonly auth can-i list nodes
 kubectl --kubeconfig $KubeConfig --context kubeai-readonly auth can-i list pods --all-namespaces
 kubectl --kubeconfig $KubeConfig --context kubeai-readonly auth can-i list events --all-namespaces
@@ -271,7 +292,7 @@ Dans un troisième terminal, depuis la racine du dépôt, démarrer le backend :
 $env:KUBEAI_ENV = 'development'
 $env:KUBERNETES_ACCESS_MODE = 'kubeconfig'
 $env:KUBERNETES_CONTEXT = 'kubeai-readonly'
-$env:KUBERNETES_KUBECONFIG_FILE = "$env:USERPROFILE\.kube\kubeai-readonly"
+$env:KUBERNETES_KUBECONFIG_FILE = "$env:USERPROFILE\.kube\kubeai-readonly.yaml"
 $ApiKeyFile = 'C:\chemin-prive\kubeai-api-key.txt'
 $env:KUBEAI_API_KEY = (Get-Content -Raw $ApiKeyFile).Trim()
 $env:MIMIR_URL = 'http://127.0.0.1:9009/prometheus'
@@ -283,8 +304,8 @@ Set-Location .\agent
 La clé API Mistral privée est lue depuis `.env` en mode développement. La clé
 Bearer de l'API FastAPI (`KUBEAI_API_KEY`) doit être configurée dans
 l'environnement privé du backend et dans Open WebUI. Vérifier `/health`,
-`/ready`, `/cluster/inventory` puis `/cluster/status` avant de lancer une
-question. Ces contrôles n'appellent pas Mistral.
+`/ready`, `/capabilities`, `/cluster/inventory` puis `/cluster/status` avant de
+lancer une question. Ces contrôles n'appellent pas Mistral.
 
 Pour l'architecture complète, Open WebUI et FastAPI communiquent par le Service
 interne `http://kubeai-agent.kubeai.svc.cluster.local:8000/v1`. Si Open WebUI
@@ -309,8 +330,9 @@ connexion API dans l'interface d'administration.
 
 ## Tests du backend
 
-Les tests unitaires et HTTP utilisent des transports simulés ; aucun cluster,
-Secret ni appel Mistral réel n'est nécessaire :
+Les tests automatisés utilisent des transports simulés ; aucun cluster,
+Secret ni appel Mistral réel n'est nécessaire. Les démonstrations A/B/C ont,
+elles, été exercées sur le cluster Docker Desktop avec le vrai fournisseur.
 
 ```powershell
 Set-Location .\agent
@@ -319,6 +341,10 @@ $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
 ..\.venv\Scripts\python.exe -m compileall -q app tests
 ```
 
+Depuis la racine, `pytest` fonctionne aussi grâce au fichier [pytest.ini](pytest.ini)
+(`pythonpath = agent`) : `pytest agent/tests --ignore=agent/tests/integration`.
+La commande depuis `agent/` reste la référence.
+
 Les tests ignorés ou exclus ne doivent pas être déclarés réussis sans exécution.
 Pour les vérifications réelles des démonstrations, suivre le protocole de
 [`docs/demo-scenarios.md`](docs/demo-scenarios.md) dans un cluster autorisé.
@@ -326,6 +352,9 @@ Pour les vérifications réelles des démonstrations, suivre le protocole de
 ## Équipe et livrables
 
 Le dépôt `kubeAI` est un travail collectif des **3 étudiants du groupe P5-G17**.
-La description de la conception de départ est conservée dans le PDF fourni ;
-la documentation de livraison décrit l'architecture et les comportements
-effectivement présents dans le dépôt.
+La conception initiale est archivée dans
+[`docs/archive/Group-17-Architecture-initiale.pdf`](docs/archive/Group-17-Architecture-initiale.pdf) ;
+l’architecture livrée et validée est décrite dans
+[`docs/architecture.md`](docs/architecture.md). Le suivi des exigences du sujet
+et des points restants est dans
+[`CONFORMITE-EXIGENCES.md`](CONFORMITE-EXIGENCES.md).

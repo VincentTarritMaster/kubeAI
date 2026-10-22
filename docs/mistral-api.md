@@ -96,8 +96,9 @@ Le prompt demande cinq rubriques françaises : état, preuves horodatées et
 sources, hypothèses, informations manquantes, vérifications. Les réponses LLM
 doivent être contrôlées sur des données réelles approuvées : un prompt ne
 garantit ni l'exactitude, ni l'exhaustivité, ni le respect parfait du format.
-Les événements Kubernetes, Grafana, les démonstrations et le cloud sont hors
-du périmètre de cette étape.
+Les événements Kubernetes et les démonstrations A/B/C sont intégrés. Grafana,
+le déploiement cloud et les alertes restent hors de cette étape ; les traces
+distribuées et Tempo sont hors périmètre.
 
 ## Profil Apertus facultatif
 

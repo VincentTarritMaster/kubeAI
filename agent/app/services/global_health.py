@@ -133,6 +133,7 @@ def assess(inventory: ClusterInventory, usage: ClusterUsage | None, mimir_error:
         "pods": {"total": len(pods) if pods is not None else None,
                  "running": sum(pod.phase == "Running" for pod in pods) if pods is not None else None,
                  "unhealthy": len(bad_pods) if pods is not None else None,
+                 "completed": sum(pod.phase == "Succeeded" for pod in pods) if pods is not None else None,
                  "affected": bad_pods[:8]},
         "restarting": restarting[:5], "restarting_total": len(restarting),
         "restart_context": "compteur cumulé sans horodatage ; conservé comme contexte historique",
@@ -173,7 +174,10 @@ def render(report: dict, *, ai_note: str, zone: str = DEFAULT_ZONE) -> str:
     lines.append("- Nœuds : données indisponibles." if nodes["total"] is None else
                  f"- Nœuds : {nodes['ready']}/{nodes['total']} Ready ({nodes['not_ready']} NotReady).")
     lines.append("- Pods : données indisponibles." if pods["total"] is None else
-                 f"- Pods : {pods['running']}/{pods['total']} Running ({pods['unhealthy']} en erreur), tous namespaces confondus.")
+                 "- Pods : " + f"{pods['running']}/{pods['total']} Running "
+                 f"({pods['unhealthy']} en erreur)" +
+                 (f", {pods.get('completed', 0)} terminé(s)" if pods.get("completed") else "") +
+                 ", tous namespaces confondus.")
     restarting = report["restarting"]
     lines.append(f"- Redémarrages cumulés : {report['restarting_total']} conteneur(s) avec un compteur non nul."
                  if restarting else "- Redémarrages : aucun cumul non nul observé dans les données disponibles.")
@@ -227,7 +231,10 @@ def render(report: dict, *, ai_note: str, zone: str = DEFAULT_ZONE) -> str:
     if report["recent_warnings"]:
         lines.append("- Examiner les sondes concernées et comparer les nouveaux avertissements à l'état actuel des ressources.")
     if report["sources"]["mimir"] != "ok":
-        lines.append("- Vérifier la collecte CPU et mémoire dans Mimir.")
+        if metrics["cpu_cores"] is None and metrics["memory_working_set_bytes"] is None:
+            lines.append("- Vérifier le scrape cAdvisor (`job=\"kubernetes-cadvisor\"`) puis la collecte Mimir.")
+        else:
+            lines.append("- Vérifier la collecte CPU et mémoire dans Mimir.")
     if report["state_code"] == "indeterminate":
         lines.append("- Réessayer la lecture des nœuds et des pods pour compléter le relevé.")
     if lines[-1] == "":

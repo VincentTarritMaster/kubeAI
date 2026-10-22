@@ -105,7 +105,7 @@ def test_day_search_refines_around_real_anomaly_and_keeps_short_cpu_series():
     assert at(33, 9) == window["end"]
     assert "signal daté à 2026-10-19T18:24:15Z" in window["search_note"]
     assert "signal daté à 2026-10-19T18:22:45Z" not in window["search_note"]
-    assert len(calls) == 18  # Twelve bounded scans + six focused series.
+    assert len(calls) == 20  # Twelve bounded scans + eight focused series.
     process_call = next(request for request in calls if "process_cpu_seconds_total" in request.url.params["query"])
     assert int(process_call.url.params["step"]) == 30
     assert len([point for point in metrics.points if point.metric == "app_cpu_cores"]) >= 6

@@ -97,7 +97,7 @@ def test_b_pod_and_date_only_resolves_namespace_and_searches_then_refines():
     assert "balayage en fenêtres de six heures" in answer
     assert "signal daté" in answer
     assert str(day.year) in answer
-    assert len(calls["mimir"]) == 18 and len(calls["loki"]) == 5
+    assert len(calls["mimir"]) == 20 and len(calls["loki"]) == 5
     assert calls["llm"] == []
 
 
@@ -110,7 +110,7 @@ def test_b_complete_iso_window_still_uses_single_bounded_query():
         answer = ask(api, [{"role": "user", "content": question}])
     assert "operations/sample-incident" in answer
     assert "balayage de quatre fenêtres" not in answer
-    assert len(calls["mimir"]) == 6 and len(calls["loki"]) == 1
+    assert len(calls["mimir"]) == 8 and len(calls["loki"]) == 1
 
 
 def test_date_only_b_streams_and_mistral_only_prioritizes_verified_sources():

@@ -376,9 +376,13 @@ def build(window, inventory, metrics, logs, failures):
             units = {"cpu_cores": "cœur(s) CPU", "app_cpu_cores": "cœur(s) CPU du processus applicatif",
                      "memory_working_set_bytes": "octets de mémoire active",
                      "restart_count": "redémarrage(s) cumulés", "cpu_limit_cores": "cœur(s) de limite CPU",
-                     "memory_limit_bytes": "octets de limite mémoire"}
+                     "memory_limit_bytes": "octets de limite mémoire",
+                     "http_error_ratio": "ratio d'erreurs HTTP 5xx (0 à 1)",
+                     "http_latency_p95_seconds": "secondes de latence HTTP p95"}
             unit = units.get(point.metric, point.metric)
-            value = f"{point.value:.4f}" if point.metric in {"cpu_cores", "app_cpu_cores", "cpu_limit_cores"} else str(round(point.value))
+            value = (f"{point.value:.4f}" if point.metric in {
+                "cpu_cores", "app_cpu_cores", "cpu_limit_cores", "http_error_ratio",
+                "http_latency_p95_seconds"} else str(round(point.value)))
             entries.append({"timestamp": stamp(moment), "type": "métrique", "source": "Mimir",
                             "resource": resource, "observation": f"Échantillon mesuré : {value} {unit}.",
                             "reference": f"query_range {point.metric} {resource} @ {stamp(moment)}"})
@@ -491,6 +495,15 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
                            and "query_range app_cpu_cores " in item["reference"]
                            and abs(datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00")).timestamp()
                                    - peak.timestamp) < 0.001)
+    for kind in ("http_error_ratio", "http_latency_p95_seconds"):
+        candidates = [item for item in timeline if item["source"] == "Mimir"
+                      and f"query_range {kind} " in item["reference"]]
+        if candidates:
+            def metric_value(item):
+                match = re.search(r"Échantillon mesuré\s*:\s*([0-9]+(?:\.[0-9]+)?)", item["observation"])
+                return float(match.group(1)) if match else 0.0
+
+            significant.append(max(candidates, key=metric_value))
     if not significant:
         significant = [item for item in timeline if item["source"] == "Loki" and re.search(
             r"error|failed|anomal|incident|timeout", item["observation"], re.I)][:6]
@@ -542,10 +555,17 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
                      "recovered": "Récupération signalée", "complete": "Fin du scénario"}[kind]
             description = f"Marqueur `{kind}` enregistré dans Loki."
         elif item["source"] == "Mimir":
-            title = "Hausse du CPU du processus"
-            match = re.search(r"Échantillon mesuré\s*:\s*([0-9.]+)", item["observation"])
-            description = (f"Consommation mesurée à {match.group(1).replace('.', ',')} cœur sur Mimir."
-                           if match else item["observation"])
+            if "http_error_ratio" in item["reference"]:
+                title = "Taux d'erreurs HTTP"
+                description = item["observation"]
+            elif "http_latency_p95_seconds" in item["reference"]:
+                title = "Latence HTTP p95"
+                description = item["observation"]
+            else:
+                title = "Hausse du CPU du processus"
+                match = re.search(r"Échantillon mesuré\s*:\s*([0-9.]+)", item["observation"])
+                description = (f"Consommation mesurée à {match.group(1).replace('.', ',')} cœur sur Mimir."
+                               if match else item["observation"])
         else:
             title = "Avertissement Kubernetes" if item["source"] == "Kubernetes" else "Anomalie dans les logs"
             description = f"{item['source']} : {item['observation']}"
@@ -617,7 +637,9 @@ async def collect(service, window, *, include_correlation=False):
         available = {point.metric for point in metrics.points}
         for name, description in (("app_cpu_cores", "CPU applicatif process_cpu_seconds_total absent sur cette fenêtre"),
                                   ("cpu_cores", "CPU historique des conteneurs absent sur cette fenêtre"),
-                                  ("memory_working_set_bytes", "mémoire historique des conteneurs absente sur cette fenêtre")):
+                                  ("memory_working_set_bytes", "mémoire historique des conteneurs absente sur cette fenêtre"),
+                                  ("http_error_ratio", "taux d'erreurs HTTP 5xx absent sur cette fenêtre"),
+                                  ("http_latency_p95_seconds", "latence HTTP p95 absente sur cette fenêtre")):
             if name not in available:
                 report["missing"].append(description)
                 report["data_status"] = "partial"

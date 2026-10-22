@@ -1,79 +1,141 @@
-# Architecture prévue
+# Architecture actuelle
 
-## Configuration du tronc commun
+Cette page décrit l’architecture **réellement déployée et validée** au
+22 octobre 2026. Le document de conception initial est archivé :
+[`archive/Group-17-Architecture-initiale.pdf`](archive/Group-17-Architecture-initiale.pdf).
 
-Open WebUI, l'agent et la collecte sont déployables par `./start.sh` (construction
-de l'image locale puis `kubectl apply -k k8s/`).
-Dans le namespace `monitoring`, Alloy collecte les métriques du pod de démonstration
-annoté et l'état des workloads via kube-state-metrics, ainsi que les logs via
-l'API Kubernetes. Les métriques sont envoyées à Mimir, les logs à Loki.
-Les données et le WAL des métriques Alloy reposent sur des PVC. Mimir conserve
-les blocs sans purge automatique ; Loki garde les logs pendant 30 jours. Le
-balayage historique interroge aussi le CPU applicatif conservé dans Mimir pour
-retrouver une anomalie même après expiration des logs Loki. Voir
-`k8s/monitoring/README.md` pour la validation et les limites de stockage.
+## Vue d’ensemble
 
-Le projet collectif de Kevin, Vincent et Anass déploie Mimir en mode monolithique
-avec des manifests Kustomize communs. Le circuit de collecte configuré est
-**Alloy → Mimir + Loki → FastAPI**, sans serveur Prometheus autonome dans le rendu
-Kustomize, sans traces ni Grafana à cette étape. Les protocoles Prometheus et
-les requêtes PromQL sont conservés. L'agent expose `/cluster/status` avec l'état des pods du
-namespace `kubeai` et leurs métriques CPU/mémoire. `/cluster/inventory` lit
-les nœuds, les pods de tous les namespaces et les événements. Son ServiceAccount
-ne peut que lister ces trois ressources. L'accès aux logs, l'analyse par LLM et la
-connexion à Open WebUI restent implémentés : le chat appelle Mistral API par défaut
-après une collecte et une réduction des observations. Apertus, auto-hébergé sur
-macOS via llama.cpp et Metal, reste une option explicite apportée par Vincent.
-L'agent lit les logs dans Loki. Le contrat de chat compatible OpenAI garantit
-la collecte avant chaque appel au modèle. La proposition antérieure avec un
-serveur d'outils OpenAPI n'est pas le chemin utilisé pour ce profil.
+KubeAI est un assistant d’observabilité Kubernetes en lecture seule :
 
-L'intégration Mimir est une configuration à valider sur un vrai cluster. Les
-vérifications statiques et tests avec réponses simulées ne démontrent pas
-l'ingestion, la persistance ou le démarrage réel. Le poste Windows de 8 Go sert
-aux tests légers ; le déploiement complet doit être essayé sur une machine
-disposant de davantage de ressources. L'intégration Mistral a été testée avec
-des réponses HTTP simulées ; aucun appel réel ni test d'hébergement régional
-n'a été effectué.
+```text
+                         Open WebUI
+                    modèle virtuel "kubeai"
+                             |
+                             v
+                    FastAPI kubeai-agent
+             /               |                \
+            v                v                 v
+   Kubernetes API        Mimir (PromQL)     Loki (LogQL)
+   nodes/pods/events     métriques          logs
+            ^                ^                 ^
+            |                |                 |
+            +-------- Alloy -+-----------------+
+                      |  logs des pods kubeai
+                      |  scrape KSM (15 s)
+                      |  scrape pods annotés (30 s)
+                      |  scrape cAdvisor via le proxy API (30 s)
+                      |
+              Mistral API (défaut) ou endpoint local Apertus
+```
+
+Le LLM ne reçoit pas d’accès direct au cluster. Le backend prépare une
+observation bornée, calcule les faits, puis le LLM peut seulement signaler une
+priorité parmi les hypothèses déjà calculées.
+
+## Deux modes de déploiement
+
+### Mode validé : Windows / Docker Desktop
+
+- FastAPI tourne **sur Windows**, avec un kubeconfig de lecture seule
+  (`~/.kube/kubeai-readonly.yaml`).
+- Open WebUI et la pile de monitoring tournent **dans Kubernetes**.
+- `scripts/start.ps1` prépare le namespace, le monitoring, le RBAC de l’agent,
+  les Secrets et les tunnels Mimir/Loki, puis démarre FastAPI et ouvre le
+  navigateur.
+- `scripts/stop.ps1` arrête les processus suivis et met Open WebUI à zéro
+  réplica, sans supprimer les PVC ni le pod de démonstration.
+
+C’est le mode utilisé pour les démonstrations A/B/C et les validations réelles.
+
+### Mode Kubernetes complet
+
+- `start.sh` construit l’image de l’agent puis applique `kubectl apply -k k8s/`.
+- L’agent est un `Deployment` dans `kubeai`, exposé par le Service
+  `kubeai-agent:8000`.
+- Open WebUI utilise l’URL interne
+  `http://kubeai-agent.kubeai.svc.cluster.local:8000/v1`.
+- Ce mode est décrit dans [`agent/README.md`](../agent/README.md) et
+  [`k8s/monitoring/README.md`](../k8s/monitoring/README.md).
+
+### Cloud
+
+Aucun déploiement cloud n’est réalisé à ce jour. La cible et les manifests
+cloud restent à définir ; voir [`decisions.md`](decisions.md).
 
 ## Composants
 
-- **Open WebUI** : interface conversationnelle utilisée par la personne qui pose une question.
-- **Agent IA** : API FastAPI qui assemble Kubernetes, Mimir et Loki et appelle Mistral API ; elle conserve également la route JSON `/cluster/status`.
-- **Mimir** : stockage monolithique des métriques reçues d'Alloy, avec API compatible Prometheus/PromQL sur le port 9009.
-- **Loki** : reçoit et recherche les logs.
-- **Alloy** : découvre les pods et nœuds, collecte leurs logs vers Loki et les métriques vers Mimir.
-- **Métriques applicatives** : les pods `kubeai` peuvent demander le scraping en ajoutant `prometheus.io/scrape: "true"`, `prometheus.io/port: "<port>"` et facultativement `prometheus.io/path: "/metrics"`. Seuls les pods Running du namespace `kubeai` sont ciblés, à 30 secondes d'intervalle.
-- **kube-state-metrics** : expose l'état et les redémarrages des pods et l'état des workloads.
-- **Modèle de langage** : Mistral Small 4 via API HTTPS par défaut. Apertus 8B Instruct quantifié reste une option locale explicite sur Mac.
-- **Kubernetes** : exécute les composants et fournit nœuds, pods et événements à l'agent via un ClusterRole limité à `list`.
+| Composant | Version / état | Rôle |
+|---|---|---|
+| Open WebUI | `v0.11.4-slim`, PVC 1 Gio | Interface authentifiée, modèle `kubeai` |
+| FastAPI `kubeai-agent` | 0.3.0 | API OpenAI-compatible, diagnostic, lecture seule |
+| Kubernetes | Docker Desktop, nœud `desktop-control-plane` | Exécute les composants et le pod de démonstration |
+| Alloy | 1.20.1, 1 réplique, PVC 1 Gio | Logs et métriques vers Loki/Mimir |
+| Mimir | 3.2.1 monolithique, PVC 10 Gio | Stockage PromQL, rétention `0s` |
+| Loki | 3.7.8, PVC 2 Gio | Logs, rétention 30 jours |
+| kube-state-metrics | 2.20.0 | État des pods, nœuds et workloads |
+| cAdvisor | intégré au kubelet | CPU/mémoire des conteneurs, via le proxy API |
+| Mistral API | `mistral-small-2603` | Fournisseur LLM par défaut |
+| Apertus | 8B Q4_K_M, optionnel | Endpoint local compatible OpenAI |
 
-## Flux général
+## Flux de collecte
 
-Alloy écrit les métriques sur `http://mimir.monitoring.svc:9009/api/v1/push`.
-FastAPI utilise `MIMIR_URL=http://mimir.monitoring.svc:9009/prometheus` ; le
-client existant `PrometheusClient` ajoute `/api/v1/query` à ce préfixe. La variable
-historique `PROMETHEUS_URL` est acceptée uniquement en repli. Loki conserve son
-endpoint de réception et son API LogQL.
+- Alloy découvre les pods du namespace `kubeai`.
+- Il envoie les logs vers Loki.
+- Il scrape kube-state-metrics toutes les 15 s.
+- Il scrape les pods annotés `prometheus.io/scrape: "true"` toutes les 30 s.
+- Il scrape cAdvisor via le proxy de l’API Kubernetes, job
+  `kubernetes-cadvisor`, toutes les 30 s.
+- Mimir reçoit les métriques sur `/api/v1/push` ; FastAPI lit l’API PromQL sous
+  le préfixe `/prometheus`.
 
-Open WebUI transmet la conversation à `/v1/chat/completions` de l'agent. Celui-ci
-lit les pods, leurs métriques et un extrait de logs, prépare un contexte borné,
-puis appelle le profil LLM sélectionné (`mistral-api` par défaut ou `local`). La
-réponse est retransmise en streaming avec le périmètre et les sources. Aucune
-commande de remédiation n'est exécutée. Les deux profils gardent le même agent,
-les mêmes routes et le modèle virtuel `kubeai` d'Open WebUI.
+Le pod de démonstration expose aussi `http_requests_total` et
+`http_request_duration_seconds` ; il s’auto-génère du trafic `/work`.
 
-Les données Open WebUI sont stockées sur un PVC de 1 Gio. La clé Mistral est
-fournie par Secret Kubernetes ou environnement privé, jamais par ConfigMap.
-Avec le profil Mistral API, les observations nécessaires quittent le cluster
-vers le fournisseur externe. Avec le profil local, elles vont à l'endpoint
-`LLM_BASE_URL`, dont l'emplacement et les journaux doivent être vérifiés. La
-région d'inférence et l'utilisation de données sensibles restent à valider avec
-le groupe. Voir [la configuration Mistral](mistral-api.md) et
-[les deux profils LLM](architecture-llm-profiles.md).
+## Flux d’une question
 
-Les manifests communs ne déploient pas de serveur Prometheus autonome. Un ancien
-serveur ou PVC peut toutefois subsister dans un cluster déjà utilisé ; réappliquer
-Kustomize ne retire pas les ressources absentes du rendu. La validation et la transition opérationnelle sont décrites dans
-[`k8s/monitoring/README.md`](../k8s/monitoring/README.md) ; aucun PVC ne doit être
-supprimé pour cette transition.
+1. Open WebUI appelle `/v1/chat/completions` de FastAPI.
+2. FastAPI découpe la question en intention : santé A, incident B, corrélation C,
+   chat général ou hors périmètre.
+3. Il lit Kubernetes, Mimir et Loki avec des bornes strictes.
+4. Il calcule les faits, la chronologie et les hypothèses.
+5. Il peut appeler Mistral/Apertus pour **signaler** une priorité, jamais pour
+   inventer un fait.
+6. Il renvoie une réponse JSON ou SSE avec les preuves et les sources.
+
+## RBAC et sécurité
+
+- **Agent** : `ClusterRole` avec `list` uniquement sur `nodes`, `pods` et
+  `events`. Aucun Secret, `exec` ou verbe de modification.
+- **Alloy** : Role dans `kubeai` pour les pods et `pods/log` ; ClusterRole
+  `kubeai-alloy-cadvisor` avec `list/watch` sur `nodes` et `get` sur
+  `nodes/proxy`.
+- **cAdvisor** : le droit `nodes/proxy` est plus large qu’un simple accès
+  métriques, car il passe par le proxy kubelet. Il reste en lecture seule ; le
+  collecteur n’est ni privilégié ni monté sur l’hôte.
+- **API** : authentification Bearer sur les routes de chat/diagnostic ; échec
+  fermé si `KUBEAI_API_KEY` manque.
+- **Données** : redaction best-effort avant envoi au LLM ; ce n’est pas une
+  anonymisation.
+- Aucune remédiation automatique.
+
+## Stockage et limites
+
+- Mimir : PVC 10 Gio, pas de purge automatique (`0s`).
+- Loki : PVC 2 Gio, rétention 30 jours.
+- Alloy : PVC 1 Gio pour le WAL.
+- Open WebUI : PVC 1 Gio.
+- Les événements Kubernetes expirent plus vite que les logs et les métriques.
+- Le poste Windows de 8 Go est serré ; les collègues disposant de 32 Go peuvent
+  valider plus confortablement.
+- Pas de Grafana, pas d’Alertmanager, pas de Tempo ; les traces sont hors
+  périmètre et les alertes restent à intégrer.
+
+## État de validation
+
+- cAdvisor : `up{job="kubernetes-cadvisor"} = 1` sur Docker Desktop.
+- `/cluster/status` : `data_status: complete`, CPU/mémoire non nuls.
+- A/B/C : validés avec preuves réelles (logs, Mimir, Loki).
+- Tests : 359 tests automatisés + 6 tests HTTP loopback.
+- Détails : [`validation-demo-http-2026-10-22.md`](validation-demo-http-2026-10-22.md),
+  [`metrics.md`](metrics.md), [`demo-scenarios.md`](demo-scenarios.md).

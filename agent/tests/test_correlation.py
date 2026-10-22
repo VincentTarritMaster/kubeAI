@@ -119,6 +119,16 @@ def test_connection_error_log_alone_has_insufficient_evidence():
     assert item["contradictions"] and item["alternatives"]
 
 
+def test_connection_error_log_with_http_5xx_is_supported_without_network_event():
+    logs = [entry("Loki", "log", 30, "app : connection refused", "Loki line-1")]
+    points = [point("http_error_ratio", 30, 0.8)]
+    result = assess_points(points, logs=logs)
+    item = next(h for h in result["hypotheses"] if h["id"] == "connectivity")
+    assert item["confidence"] == "étayée par log et erreurs HTTP, causalité non prouvée"
+    assert any("http_error_ratio" in proof["reference"] for proof in item["supporting_observations"])
+    assert any("erreur applicative locale" in text for text in item["contradictions"])
+
+
 def test_network_event_needs_same_window_and_resource():
     logs = [entry("Loki", "log", 30, "app : connection timed out", "Loki line-1")]
     close = [entry("Kubernetes", "événement", 70, "NetworkUnavailable", "Event network")]
@@ -267,7 +277,7 @@ def test_json_sse_diagnose_and_no_paid_call_without_key():
     assert "Mistral API indisponible" not in text
     assert diagnosed.json()["observation"]["scope"] == "correlation"
     assert diagnosed.json()["observation"]["hypotheses"][0]["id"] == "demo_cpu_activity"
-    assert len(calls["mimir"]) == 18 and len(calls["loki"]) == 3 and calls["llm"] == []
+    assert len(calls["mimir"]) == 24 and len(calls["loki"]) == 3 and calls["llm"] == []
     queries = [call.url.params["query"] for call in calls["mimir"]]
     assert any("kube_pod_container_status_restarts_total" in query for query in queries)
     assert any("rate(process_cpu_seconds_total" in call.url.params["query"]
@@ -367,5 +377,27 @@ def test_incident_application_emits_prometheus_process_cpu_counter():
     spec.loader.exec_module(module)
     output = module.render_metrics()
     assert "# TYPE process_cpu_seconds_total counter" in output
-    assert output.rstrip().startswith("# HELP process_cpu_seconds_total")
-    assert float(output.splitlines()[-1].split()[-1]) >= 0
+    assert "# HELP process_cpu_seconds_total" in output
+    process_line = next(line for line in output.splitlines() if line.startswith("process_cpu_seconds_total "))
+    assert float(process_line.split()[-1]) >= 0
+    assert "http_requests_total" in output
+    assert "http_request_duration_seconds_bucket" in output
+
+
+def test_demo_http_errors_correlate_with_anomaly_marker_and_latency():
+    points = [
+        point("http_error_ratio", 10, 0.0),
+        point("http_error_ratio", 80, 0.75),
+        point("http_latency_p95_seconds", 10, 0.03),
+        point("http_latency_p95_seconds", 80, 0.2),
+    ]
+    logs = [entry("Loki", "log", 40, "KUBEAI_DEMO_INCIDENT phase=anomaly_start", "Loki start"),
+            entry("Loki", "log", 150, "KUBEAI_DEMO_INCIDENT phase=recovered", "Loki recovered")]
+    result = assess_points(points, logs=logs)
+    hypothesis = next(h for h in result["hypotheses"] if h["id"] == "demo_http_errors")
+    assert hypothesis["confidence"].startswith("limitée")
+    assert len(hypothesis["supporting_observations"]) == 5
+    assert any("http_error_ratio" in proof["reference"] for proof in hypothesis["supporting_observations"])
+    assert any("http_latency_p95_seconds" in proof["reference"] for proof in hypothesis["supporting_observations"])
+    text = render(result, "Analyse déterministe.")
+    assert "taux d'erreurs HTTP 5xx" in text

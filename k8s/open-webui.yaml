@@ -69,7 +69,7 @@ spec:
             - name: ENABLE_FOLLOW_UP_GENERATION
               value: "False"
             - name: DEFAULT_PROMPT_SUGGESTIONS
-              value: '[{"title":["Santé du namespace","Pods et ressources"],"content":"Quel est l’état actuel du namespace kubeai ? Appuie ta réponse sur les métriques disponibles."},{"title":["Analyser un incident","Erreurs et logs récents"],"content":"Quels pods ont actuellement un problème ? Vérifie leur état, les redémarrages et les logs récents."}]'
+              value: '[{"title":["Santé du namespace","Pods et ressources"],"content":"Quel est l’état actuel du namespace kubeai ? Appuie ta réponse sur les métriques disponibles."},{"title":["Analyser un incident","Erreurs et logs récents"],"content":"Quels pods ont actuellement un problème ? Vérifie leur état, les redémarrages et les logs récents."},{"title":["Corréler un incident","Logs, CPU et HTTP"],"content":"Analyse l’incident du dernier script de démonstration, puis corrèle les logs, le CPU et les erreurs HTTP."}]'
           volumeMounts:
             - name: data
               mountPath: /app/backend/data

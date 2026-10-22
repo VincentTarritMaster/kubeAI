@@ -1,8 +1,9 @@
 # Agent kubeAI
 
 Ce dossier contient le backend Python de kubeAI : une API FastAPI en lecture seule.
-La version actuelle fournit l'état des pods et leurs mesures CPU/mémoire, récupère
-des logs dans Loki et utilise Mistral API pour répondre aux questions. Apertus reste facultatif.
+La version actuelle fournit l'état des pods, leurs mesures CPU/mémoire via
+cAdvisor, récupère des logs dans Loki et utilise Mistral API pour répondre aux
+questions. Apertus reste facultatif.
 
 | Fichier / dossier | Rôle |
 |---|---|
@@ -43,15 +44,26 @@ détectables et appelle Mistral API. Le modèle virtuel exposé est `kubeai` ;
 `kubeai-apertus` reste accepté pour les conversations historiques. L'inventaire
 des nœuds, pods de tous les namespaces et événements est exposé séparément sur
 `/cluster/inventory`. Voir [la configuration Mistral](../docs/mistral-api.md) et
-[le profil Apertus facultatif](../llm/README.md). L'intégration Mimir doit
-encore être validée sur un cluster ; les tests simulés ne prouvent pas son ingestion.
+[le profil Apertus facultatif](../llm/README.md). L'intégration Mimir/Loki a été
+exercée sur le cluster Docker Desktop du projet ; elle reste à revalider sur une
+autre cible, et les tests simulés ne prouvent pas l'ingestion.
 
 La question « Quel est l'état de santé de mon cluster ? » utilise cet inventaire
 dans le chat Open WebUI et dans `/diagnose`. Les faits et le niveau de santé sont
 calculés avant Mistral ; les métriques Mimir agrégées couvrent les conteneurs de
-pods de tous les namespaces. Le modèle ne peut ajouter qu'une priorité de lecture
-étayée ; sans clé ou en cas d'échec, le résumé déterministe reste disponible.
+pods de tous les namespaces. Le modèle ne
+peut ajouter qu'une priorité de lecture étayée ; sans clé ou en cas d'échec, le
+résumé déterministe reste disponible.
 Les règles et scénarios figurent dans [la démonstration A](../docs/demo-scenarios.md).
+
+La configuration de référence scrape cAdvisor via le proxy de l'API Kubernetes.
+Le ServiceAccount Alloy possède `list/watch` sur les nœuds et `get` sur
+`nodes/proxy` ; ce droit élargit le RBAC mais reste en lecture seule. `/cluster/status`
+peut donc renseigner `cpu_cores` et `memory_working_set_bytes` ; les démos B/C
+utilisent aussi `process_cpu_seconds_total` du pod annoté. Le script
+[`verify-observability.py`](../scripts/verify-observability.py) vérifie KSM, cAdvisor
+et Loki ; `--require-container-metrics` rend l'absence de métriques conteneur
+bloquante. Le détail des signaux est dans [`docs/metrics.md`](../docs/metrics.md).
 
 ## Installation dans Minikube
 
@@ -96,6 +108,7 @@ Garder ce terminal ouvert. Consulter :
 
 - API : <http://127.0.0.1:8000/cluster/status>
 - Inventaire du cluster : <http://127.0.0.1:8000/cluster/inventory>
+- Capacités réelles (KSM, cAdvisor, HTTP) : <http://127.0.0.1:8000/capabilities>
 - Documentation interactive : <http://127.0.0.1:8000/docs>
 - Contrat OpenAPI : <http://127.0.0.1:8000/openapi.json>
 - État du moteur : <http://127.0.0.1:8000/llm/status>
@@ -251,6 +264,7 @@ et les API locales Mimir/Loki sans déclencher de génération LLM :
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/capabilities
 Invoke-RestMethod http://127.0.0.1:8000/cluster/inventory
 Invoke-RestMethod http://127.0.0.1:8000/cluster/status
 Invoke-RestMethod 'http://127.0.0.1:9009/prometheus/api/v1/query?query=up'

@@ -4,8 +4,10 @@ Projet collectif de Kevin, Vincent et Anass. Contrôle réalisé le 19 octobre 2
 sur Windows, avec 8 Go de RAM. **Aucun appel réel à Mistral, aucun cluster ni
 moteur local n'a été lancé.**
 
-> Rapport historique de l'étape 3. Des essais réels Mistral et des scénarios
-> A/B/C ont ensuite été réalisés ; voir l'[état actuel](../README.md#état-du-projet-et-démonstrations).
+> Rapport historique de l'étape 3. Des essais réels Mistral, les scénarios
+> A/B/C et cAdvisor ont ensuite été intégrés ; l'état actuel comporte 359 tests
+> automatisés. Voir l'[état actuel](../README.md#état-du-projet-et-démonstrations)
+> et [l’architecture](architecture.md).
 
 ## 1. Configuration et modèle retenus
 
