@@ -88,6 +88,9 @@ Open WebUI garde son URL interne vers FastAPI et sélectionne le modèle virtuel
 les conversations sauvegardées ; il désigne le fournisseur actuellement actif.
 Le serveur conserve `/v1/models`, `/v1/chat/completions` JSON et SSE ainsi que
 `/diagnose`. Les réponses déterministes de santé sont produites sans appel LLM.
+La priorisation passe par une chaîne **LangChain Core** bornée ; le transport
+HTTP reste direct pour le streaming et le JSON Schema Mistral (voir
+[`langchain.md`](langchain.md)).
 Les erreurs 401/403, 429, 5xx, timeout, connexion et réponse invalide sont
 converties en messages français sans corps fournisseur ni clé. Aucune relance
 automatique ne risque de multiplier les appels facturables.

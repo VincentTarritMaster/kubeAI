@@ -242,8 +242,10 @@ de consommation n'a été collecté dans cette étape.
 ## Évolution des profils dans l'architecture kubeAI
 
 - Le PDF initial est archivé dans `docs/archive/` ; il reste une référence de
-  conception. L'application livrée utilise un FastAPI commun ; LangChain n'est
-  pas intégré.
+  conception. L'application livrée utilise FastAPI + **LangChain Core** pour la
+  chaîne de sélection/priorisation. Ce n'est pas un agent LangChain autonome :
+  les outils Kubernetes/Mimir/Loki restent appelés par le backend. Voir
+  [`langchain.md`](langchain.md).
 - La pile de collecte active est Alloy → Mimir + Loki. Prometheus autonome est
   conservé hors du rendu Kustomize ; Grafana reste optionnel et Tempo est hors
   périmètre. Alloy scrape aussi cAdvisor via le proxy de l'API Kubernetes, avec
@@ -253,8 +255,8 @@ de consommation n'a été collecté dans cette étape.
 - Le défaut est Mistral API ; l'option Apertus conserve l'apport local de Vincent.
   L'emplacement effectif de traitement détermine si les observations quittent
   l'infrastructure de l'équipe.
-- Les démonstrations A/B/C sont disponibles avec repli déterministe; leur
-  fonctionnement de bout en bout sur cluster doit encore être validé.
+- Les démonstrations A/B/C sont validées sur Docker Desktop ; leur revalidation
+  sur une machine 32 Go reste souhaitable.
 
 ## Vérifications réelles encore à faire
 

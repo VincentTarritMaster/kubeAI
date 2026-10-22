@@ -2,7 +2,9 @@
 
 Projet collectif des **3 étudiants** du groupe P5-G17 : un assistant d'observabilité
 Kubernetes qui répond à des questions de santé et d'incident à partir de
-preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`.
+preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`. Le backend
+combine **FastAPI** et **LangChain Core** pour la chaîne de sélection, sans agent
+autonome.
 
 ## Pour les collègues qui ont déjà cloné le projet
 
@@ -122,12 +124,14 @@ Open WebUI ── modèle virtuel kubeai ─────────────
 | Mimir | Stocke les métriques et répond aux requêtes PromQL historiques. |
 | Loki | Stocke les logs consultés par LogQL. |
 | FastAPI | Orchestre l'inventaire en lecture seule, les requêtes Mimir/Loki, les diagnostics A/B/C et l'API compatible OpenAI. |
+| LangChain Core | Fournit la chaîne de sélection/priorisation du LLM, sans agent autonome ni accès direct au cluster. |
 | Mistral API / Apertus local | Fournit une analyse facultative et contrainte par les preuves calculées. Le profil est choisi par configuration. |
 | Open WebUI | Interface conversationnelle authentifiée qui appelle FastAPI avec le modèle `kubeai`. |
 
 Les manifests actifs se trouvent dans [`k8s/`](k8s/). Les configurations
 spécifiques sont décrites dans [`docs/architecture.md`](docs/architecture.md),
 [`docs/architecture-llm-profiles.md`](docs/architecture-llm-profiles.md),
+[`docs/langchain.md`](docs/langchain.md),
 [`docs/mistral-api.md`](docs/mistral-api.md) et
 [`k8s/monitoring/README.md`](k8s/monitoring/README.md).
 Le document d'architecture initial fourni avec le sujet est archivé dans
@@ -142,7 +146,7 @@ Docker Desktop : santé globale, chronologie d'incident avec 52 à 80 observatio
 historiques Mimir/Loki selon la fenêtre, puis corrélation entre les marqueurs de
 scénario et les métriques CPU/HTTP du pod applicatif. Consultez
 [`docs/demo-scenarios.md`](docs/demo-scenarios.md) pour les questions, preuves,
-limites et étapes de reproduction. Les 359 tests automatisés et les 6 tests
+limites et étapes de reproduction. Les 360 tests automatisés et les 6 tests
 HTTP loopback passent ; les tests emploient des sources simulées et ne remplacent
 pas une validation du cluster. La page
 [`docs/metrics.md`](docs/metrics.md) détaille ce qui est réellement collecté ;

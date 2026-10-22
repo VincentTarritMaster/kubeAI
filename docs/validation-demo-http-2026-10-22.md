@@ -58,8 +58,8 @@ le LLM ni renvoyer de clé. Elle est couverte par
 ## Résultats exécutés
 
 ```text
-359 passed, 1 warning in 57.59s
-6 passed, 1 warning in 7.03s   (tests HTTP loopback A/B/C)
+360 passed, 1 warning in 40.77s
+6 passed, 1 warning in 6.44s   (tests HTTP loopback A/B/C)
 ```
 
 Le cas `connectivity` + erreurs HTTP et les tests `/capabilities` sont donc
@@ -180,6 +180,31 @@ Après redémarrage de Docker Desktop et activation de cAdvisor :
   `container_metrics=available`, `cpu_cores=0,000458`,
   `memory_working_set_MiB=3,25`.
 
+### Non-régression après intégration LangChain (22 octobre)
+
+La chaîne LangChain a été exercée sur le chemin réellement utilisé par Open
+WebUI :
+
+- `/capabilities` : `llm.framework=langchain`, `cadvisor=available` ;
+- A via `/v1/chat/completions` : `13/14 Running`, CPU ≈ `0,294` cœur,
+  mémoire ≈ `1089,9 Mio`, sources `ok` ;
+- A et C via SSE : frames `delta` reçues, terminaison `data: [DONE]` ;
+- B via `/diagnose` : `76` observations, 5xx et latence présents ;
+- C via `/diagnose` : `connectivity` principale, `76` observations,
+  `connection refused`, ratio `0,4690 → 1,0000`, latence `0,1950 s` ;
+  la seule donnée manquante est l’événement Kubernetes historique ;
+- Open WebUI `0.11.4` répond `200` sur `/` et `/api/version` ;
+- sans session, `/api/v1/models` et `/api/v1/auths/` renvoient `401` : le
+  contrôle d’accès fonctionne ;
+- la connexion stockée par Open WebUI vers `http://host.docker.internal:8000/v1`
+  répond `200` pour `/models` ; l’ancienne URL de Service
+  `kubeai-agent.kubeai.svc.cluster.local` est indisponible dans le mode Windows,
+  et Open WebUI bascule sur la seconde connexion.
+
+Le clic dans le navigateur n’a pas été automatisé (session utilisateur non
+disponible), mais l’interface est servie et le chemin Open WebUI → agent est
+testé de bout en bout, y compris le streaming SSE.
+
 ### Validation de `/capabilities`
 
 Un second processus FastAPI a été lancé sur le port 8001 avec le kubeconfig de
@@ -250,6 +275,9 @@ Vérifier dans la réponse :
 - [test_correlation.py](../agent/tests/test_correlation.py)
 - [test_capabilities.py](../agent/tests/test_capabilities.py)
 - [test_cadvisor_manifest.py](../agent/tests/test_cadvisor_manifest.py)
+- [llm_service.py](../agent/app/services/llm_service.py)
+- [requirements.txt](../agent/requirements.txt)
+- [langchain.md](langchain.md)
 - [config.alloy](../k8s/monitoring/config/config.alloy)
 - [rbac-cadvisor.yaml](../k8s/monitoring/rbac-cadvisor.yaml)
 - [kustomization.yaml](../k8s/monitoring/kustomization.yaml)

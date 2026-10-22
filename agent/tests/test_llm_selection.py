@@ -31,6 +31,11 @@ def select(content, *, provider="mistral-api", finish_reason="stop", code=200):
     return asyncio.run(run()), calls
 
 
+def test_llm_service_declares_langchain_framework():
+    settings = Settings(llm_provider="mistral-api", llm_api_key="fake-unit-key", llm_api_key_file="")
+    assert LLMService(None, settings).framework == "langchain"
+
+
 def test_mistral_selection_uses_strict_wire_schema_and_sufficient_budget():
     result, calls = select('{"priority":"restart"}')
     assert result == "restart"

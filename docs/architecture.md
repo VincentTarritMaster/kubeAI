@@ -31,7 +31,9 @@ KubeAI est un assistant d’observabilité Kubernetes en lecture seule :
 
 Le LLM ne reçoit pas d’accès direct au cluster. Le backend prépare une
 observation bornée, calcule les faits, puis le LLM peut seulement signaler une
-priorité parmi les hypothèses déjà calculées.
+priorité parmi les hypothèses déjà calculées. Cette sélection passe par une
+chaîne **LangChain Core** (`ChatPromptTemplate` → appel HTTP borné →
+validation d’allowlist), pas par un agent autonome.
 
 ## Deux modes de déploiement
 
@@ -69,6 +71,7 @@ cloud restent à définir ; voir [`decisions.md`](decisions.md).
 |---|---|---|
 | Open WebUI | `v0.11.4-slim`, PVC 1 Gio | Interface authentifiée, modèle `kubeai` |
 | FastAPI `kubeai-agent` | 0.3.0 | API OpenAI-compatible, diagnostic, lecture seule |
+| LangChain Core | 1.7.0 | Chaîne de sélection/priorisation, sans agent autonome |
 | Kubernetes | Docker Desktop, nœud `desktop-control-plane` | Exécute les composants et le pod de démonstration |
 | Alloy | 1.20.1, 1 réplique, PVC 1 Gio | Logs et métriques vers Loki/Mimir |
 | Mimir | 3.2.1 monolithique, PVC 10 Gio | Stockage PromQL, rétention `0s` |
@@ -99,8 +102,8 @@ Le pod de démonstration expose aussi `http_requests_total` et
    chat général ou hors périmètre.
 3. Il lit Kubernetes, Mimir et Loki avec des bornes strictes.
 4. Il calcule les faits, la chronologie et les hypothèses.
-5. Il peut appeler Mistral/Apertus pour **signaler** une priorité, jamais pour
-   inventer un fait.
+5. Il exécute la chaîne **LangChain** de sélection pour **signaler** une priorité
+   parmi les hypothèses calculées, jamais pour inventer un fait.
 6. Il renvoie une réponse JSON ou SSE avec les preuves et les sources.
 
 ## RBAC et sécurité
@@ -136,6 +139,7 @@ Le pod de démonstration expose aussi `http_requests_total` et
 - cAdvisor : `up{job="kubernetes-cadvisor"} = 1` sur Docker Desktop.
 - `/cluster/status` : `data_status: complete`, CPU/mémoire non nuls.
 - A/B/C : validés avec preuves réelles (logs, Mimir, Loki).
-- Tests : 359 tests automatisés + 6 tests HTTP loopback.
+- Tests : 360 tests automatisés + 6 tests HTTP loopback.
 - Détails : [`validation-demo-http-2026-10-22.md`](validation-demo-http-2026-10-22.md),
-  [`metrics.md`](metrics.md), [`demo-scenarios.md`](demo-scenarios.md).
+  [`metrics.md`](metrics.md), [`demo-scenarios.md`](demo-scenarios.md) et
+  [`langchain.md`](langchain.md).

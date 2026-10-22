@@ -69,6 +69,7 @@ def test_capabilities_reports_sources_and_optional_metrics_without_llm_call():
         "application_http": "available",
     }
     assert body["llm"]["provider"] == "mistral-api"
+    assert body["llm"]["framework"] == "langchain"
     assert body["llm"]["configured"] is False
     assert calls["llm"] == []
     assert any("last_over_time(http_requests_total[1h])" in request.url.params["query"]

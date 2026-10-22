@@ -5,7 +5,7 @@ Branche : `integration/kubeai`. Base : `23260c91b45ed202e6aef61576263d6cbd1cb615
 
 > Rapport historique de l'étape 2. Depuis ce contrôle, Mistral API, les
 > scénarios A/B/C et cAdvisor ont été intégrés ; l'état actuel comporte
-> 359 tests automatisés. Voir le
+> 360 tests automatisés. Voir le
 > [README](../README.md#état-du-projet-et-démonstrations) et
 > [l’architecture](architecture.md).
 

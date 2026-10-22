@@ -37,8 +37,8 @@ arbitraire. Elle indique :
   `available`, `degraded`, `unavailable` ou `unknown`. `application_http` est
   `available` si `http_requests_total` a un échantillon dans la dernière heure,
   même après la fin du pod de démonstration ;
-- `llm` : fournisseur, modèle et booléen `configured` (clé Mistral présente, ou
-  profil local sélectionné), sans la clé ;
+- `llm` : fournisseur, modèle, `framework` (`langchain`) et booléen `configured`
+  (clé Mistral présente, ou profil local sélectionné), sans la clé ;
 - `limits` : bornes d'observation, d'historique et de génération.
 
 Exemple de lecture : si `metrics.cadvisor` vaut `unavailable`, les champs

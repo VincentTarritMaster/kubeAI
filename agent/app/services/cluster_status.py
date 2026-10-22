@@ -370,6 +370,7 @@ class ClusterStatusService:
             "llm": {
                 "provider": settings.llm_provider,
                 "model": settings.llm_model,
+                "framework": "langchain",
                 "configured": llm_configured,
             },
             "limits": {

@@ -7,8 +7,9 @@ Le projet KubeAI est maintenant dans l’état suivant.
 CE QUI EST FAIT
 - cAdvisor est activé via le proxy de l’API Kubernetes : les métriques CPU/mémoire
   des conteneurs sont disponibles.
+- Le backend est FastAPI + LangChain Core pour la chaîne de priorisation.
 - A/B/C sont validés avec des preuves réelles.
-- 359 tests automatisés + 6 tests HTTP loopback passent.
+- 360 tests automatisés + 6 tests HTTP loopback passent.
 - La documentation est alignée sur l’état actuel : README, architecture,
   métriques, installation, décisions.
 - Le PDF de conception initiale est archivé dans docs/archive/ ; le DOCX

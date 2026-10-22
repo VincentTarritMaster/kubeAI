@@ -1,9 +1,10 @@
 # Agent kubeAI
 
-Ce dossier contient le backend Python de kubeAI : une API FastAPI en lecture seule.
-La version actuelle fournit l'état des pods, leurs mesures CPU/mémoire via
-cAdvisor, récupère des logs dans Loki et utilise Mistral API pour répondre aux
-questions. Apertus reste facultatif.
+Ce dossier contient le backend Python de kubeAI : une API **FastAPI** en lecture
+seule, avec une chaîne **LangChain Core** pour la priorisation LLM. La version
+actuelle fournit l'état des pods, leurs mesures CPU/mémoire via cAdvisor,
+récupère des logs dans Loki et utilise Mistral API pour répondre aux questions.
+Apertus reste facultatif.
 
 | Fichier / dossier | Rôle |
 |---|---|
@@ -17,7 +18,7 @@ questions. Apertus reste facultatif.
 | `app/services/cluster_status.py` | Assembler l'état du namespace et l'inventaire du cluster |
 | `app/services/global_health.py` | Évaluer et présenter la santé globale avec des règles déterministes |
 | `app/services/diagnosis.py` | Produire le diagnostic |
-| `app/services/llm_service.py` | Appeler le modèle de langage |
+| `app/services/llm_service.py` | Chaîne LangChain de sélection/priorisation et client LLM borné |
 | `app/services/privacy.py` | Masquer les secrets et identifiants détectables |
 | `app/prompts/` | Instructions du modèle |
 | `tests/test_api.py` | Tests automatisés avec réponses Kubernetes/Mimir simulées |
