@@ -1,88 +1,46 @@
-Objet : KubeAI — état actuel, cAdvisor activé, docs alignées
+Objet : KubeAI — commandes uniques à la racine
 
 Salut,
 
-Le projet KubeAI est maintenant dans l’état suivant.
+La racine du dépôt est désormais l’unique point d’entrée :
 
-CE QUI EST FAIT
-- cAdvisor est activé via le proxy de l’API Kubernetes : les métriques CPU/mémoire
-  des conteneurs sont disponibles.
-- Le backend est FastAPI + LangChain Core pour la chaîne de priorisation.
-- A/B/C sont validés avec des preuves réelles.
-- 360 tests automatisés + 6 tests HTTP loopback passent.
-- La documentation est alignée sur l’état actuel : README, architecture,
-  métriques, installation, décisions.
-- Le PDF de conception initiale est archivé dans docs/archive/ ; le DOCX
-  dupliqué a été supprimé.
+  C:\Users\anass\OneDrive\Documents\GitHub\kubeAI
 
-CE QUI RESTE (voir CONFORMITE-EXIGENCES.md)
-- déploiement cloud ;
-- alertes (Alertmanager + règles) ;
-- document consolidé docs/evaluation.md (exactitude, fiabilité, sécurité,
-  limites) ;
-- captures A/B/C et rapport ;
-- commit/push du dépôt.
+Commandes Windows/PowerShell :
 
-IMPORTANT AVANT DE TESTER
-Les changements doivent être commités et poussés pour que vous les récupériez.
-Sinon, il faut joindre les fichiers à ce message.
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+  .\start.ps1
+  .\start-failure.ps1
+  .\stop-failure.ps1
+  .\stop.ps1
 
-Commandes de test sur une machine 32 Go :
+Ne pas utiliser l’ancienne séquence .\scripts\stop.ps1 puis
+.\scripts\start.ps1 : ces fichiers ne sont que des alias des commandes racine.
 
-  git pull
-  .\scripts\stop.ps1
-  .\scripts\start.ps1
+Déroulé de validation :
 
-Si PowerShell refuse le script non signé :
+1. Démarrer Docker Desktop.
+2. Lancer .\start.ps1.
+3. Ouvrir http://127.0.0.1:8080, créer le compte local et choisir le modèle
+   `kubeai`.
+4. Poser A :
+   « Donne-moi l’état de santé actuel du cluster, tous namespaces confondus.
+   Indique les pods malsains, les redémarrages et les données manquantes. »
+5. Lancer .\start-failure.ps1 dans un second terminal.
+6. Attendre les marqueurs `anomaly_start`, `recovered`, `complete`.
+7. Poser B :
+   « Analyse le dernier incident. Trouve le pod et la fenêtre UTC à partir des
+   logs et des événements, puis donne la chronologie avec les preuves. »
+8. Poser C :
+   « Pour ce même incident, corrèle les logs, le CPU et les erreurs HTTP.
+   Cite les valeurs observées et les données manquantes. »
+9. Fermer avec .\stop-failure.ps1 puis .\stop.ps1.
 
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
+Les PVC, Mimir et Loki sont conservés par stop.ps1.
 
-Vérification cAdvisor :
-
-  Invoke-RestMethod http://127.0.0.1:8000/capabilities
-  Invoke-RestMethod http://127.0.0.1:8000/cluster/status
-  python scripts\verify-observability.py --context docker-desktop --require-container-metrics
-
-Attendu :
-- cadvisor = available ;
-- data_status = complete ;
-- container_metrics = available ;
-- CPU et mémoire non nuls.
-
-DÉMO A/B/C
-Lancer un nouveau scénario :
-
-  .\scripts\run-demo-incident.ps1
-  python scripts\verify-demo-metrics.py --context docker-desktop
-
-Puis, dans Open WebUI, poser B/C avec les horodatages UTC affichés par le
-script. Exemple avec une ancienne fenêtre déjà collectée :
-
-  Corrèle les logs, le CPU et les erreurs HTTP de l’incident du pod kubeai-demo-incident dans le namespace kubeai, le 22 octobre 2026 entre 19:36 et 19:41 UTC.
-
-Attention au fuseau :
-- le script affiche l’UTC ;
-- Open WebUI affiche l’heure suisse (UTC+2) ;
-- 19:36 UTC = 21:36 en Suisse ;
-- ne pas utiliser 23:36, qui correspond à 21:36 UTC, hors scénario.
-
-SÉCURITÉ
-cAdvisor est lu via nodes/proxy. Alloy possède list/watch sur nodes et get sur
-nodes/proxy, en lecture seule. Le collecteur n’est ni privilégié ni monté sur
-l’hôte. C’est le compromis nécessaire pour les métriques conteneur.
-
-FICHIERS À LIRE
+Références :
 - README.md
+- docs/two-clusters.md
+- docs/agent-tools.md
+- docs/validation-two-clusters-2026-10-27.md
 - CONFORMITE-EXIGENCES.md
-- docs/architecture.md
-- docs/metrics.md
-- docs/INSTALLATION.md
-- docs/validation-demo-http-2026-10-22.md
-
-Merci de confirmer sur 32 Go :
-- up{job="kubernetes-cadvisor"} = 1 ;
-- CPU/mémoire conteneur dans /cluster/status ;
-- A avec métriques ;
-- B/C avec connection refused, 500 et latence.
-
-À bientôt.
