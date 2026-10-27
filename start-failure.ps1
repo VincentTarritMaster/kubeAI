@@ -6,14 +6,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not $Context) {
-    $python = if (Get-Command python -ErrorAction SilentlyContinue) {
-        'python'
-    } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
-        'python3'
-    } else {
-        throw 'Python est introuvable dans le PATH.'
-    }
-    $Context = & $python (Join-Path $PSScriptRoot 'scripts/cluster-context.py') observed
+    $pythonExe = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
+    $pythonArgs = @()
+    if ($pythonExe -eq 'py') { $pythonArgs = @('-3') }
+    $Context = & $pythonExe @pythonArgs (Join-Path $PSScriptRoot 'scripts/cluster-context.py') observed
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 if ($Shell -eq 'sh') {

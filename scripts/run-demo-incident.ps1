@@ -1,13 +1,17 @@
 #Requires -Version 5.1
 param([string]$Context = '', [string]$Namespace = '')
 if (-not $Context) {
-    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
-    $Context = & $python (Join-Path $PSScriptRoot 'cluster-context.py') observed
+    $pythonExe = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
+    $pythonArgs = @()
+    if ($pythonExe -eq 'py') { $pythonArgs = @('-3') }
+    $Context = & $pythonExe @pythonArgs (Join-Path $PSScriptRoot 'cluster-context.py') observed
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 if (-not $Namespace) {
-    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
-    $Namespace = & $python (Join-Path $PSScriptRoot 'cluster-context.py') namespace
+    $pythonExe = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
+    $pythonArgs = @()
+    if ($pythonExe -eq 'py') { $pythonArgs = @('-3') }
+    $Namespace = & $pythonExe @pythonArgs (Join-Path $PSScriptRoot 'cluster-context.py') namespace
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 $demoContext = $Context

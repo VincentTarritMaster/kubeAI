@@ -5,16 +5,12 @@ param(
     [switch]$NoForward
 )
 $ErrorActionPreference = 'Stop'
-$python = if (Get-Command python -ErrorAction SilentlyContinue) {
-    'python'
-} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
-    'python3'
-} else {
-    throw 'Python est introuvable dans le PATH. Installez Python 3.12 ou ajoutez-le au PATH.'
-}
+$pythonExe = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
+$pythonArgs = @()
+    if ($pythonExe -eq 'py') { $pythonArgs = @('-3') }
 $arguments = @((Join-Path $PSScriptRoot 'scripts/start-two-clusters.py'))
 if ($Supervision) { $arguments += @('--supervision', $Supervision) }
 if ($Observed) { $arguments += @('--observed', $Observed) }
 if ($NoForward) { $arguments += '--no-forward' }
-& $python @arguments
+& $pythonExe @pythonArgs @arguments
 exit $LASTEXITCODE
