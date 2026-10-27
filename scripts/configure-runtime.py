@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import tempfile
 from urllib.parse import urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,8 +116,16 @@ def configure(context, config, secret_name, key):
         apply_secret("kubeai-api-auth", secrets.token_urlsafe(32))
     if key:
         apply_secret(secret_name, key)
-    subprocess.run(command + ["patch", "configmap", "kubeai-agent-config", "--type=merge", "--patch-file=/dev/stdin"],
-                   input=json.dumps({"data": config}), text=True, check=True)
+    payload = json.dumps({"data": config})
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as patch:
+        patch.write(payload)
+        patch_path = patch.name
+    try:
+        subprocess.run(command + ["patch", "configmap", "kubeai-agent-config",
+                                  "--type=merge", "--patch-file", patch_path],
+                       text=True, check=True)
+    finally:
+        Path(patch_path).unlink(missing_ok=True)
     print("Configuration .env appliquée : fournisseur " + config["LLM_PROVIDER"])
 
 
