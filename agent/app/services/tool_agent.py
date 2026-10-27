@@ -36,6 +36,43 @@ class ToolAgent:
             raise ValueError("Unverified pod name. Never invent resource names. Omit pod in "
                              "find_latest_incident, or read get_cluster_inventory to discover real resources.")
 
+    @staticmethod
+    def requested_window(chat):
+        """Return the explicit ISO UTC bounds of the latest user question, if present."""
+        text = chat.messages[-1].content
+        found = re.findall(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", text)
+        if len(found) < 2:
+            return None
+        try:
+            start = datetime.fromisoformat(found[0].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(found[1].replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return start, end
+
+    def verify_window(self, name, arguments, chat):
+        """Do not let the model broaden or replace an explicitly requested window."""
+        if name not in {"get_logs", "get_metrics", "get_events", "get_incident_evidence"}:
+            return
+        requested = self.requested_window(chat)
+        if requested is None:
+            return
+        start, end = requested
+        raw_start, raw_end = arguments.get("start"), arguments.get("end")
+        if not raw_start or not raw_end:
+            raise ValueError("The user supplied explicit UTC bounds. Pass start and end unchanged.")
+        try:
+            actual_start = datetime.fromisoformat(str(raw_start).replace("Z", "+00:00"))
+            actual_end = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("Use ISO-8601 UTC bounds from the user's question.") from error
+        if actual_start < start or actual_end > end:
+            raise ValueError(
+                "Do not broaden the window. Use exactly the UTC bounds from the user's question: "
+                + start.isoformat() + " to " + end.isoformat() + "."
+            )
+
     def remember_targets(self, result, known):
         if isinstance(result, dict):
             namespace = result.get("namespace") or self.settings.namespace
@@ -199,6 +236,7 @@ class ToolAgent:
                             answer += "\n\n---\n" + "\n".join(windows[-3:])
                         return answer, {"scope": "agent", "status": arguments["kind"], "observed_at": clock,
                                         "namespace": self.settings.namespace, "tools": trace}
+                    self.verify_window(name, arguments, chat)
                     self.verify_target(arguments, references, known)
                     signature = name + json.dumps(arguments, sort_keys=True)
                     if signature in cache:
