@@ -1,0 +1,200 @@
+KubeAI - PROCEDURE DE TEST A/B/C
+================================
+
+Racine du projet :
+C:\Users\anass\OneDrive\Documents\GitHub\kubeAI
+
+Temps total estime : 10 a 15 minutes.
+
+
+1. PREPARATION
+--------------
+
+Demarrer Docker Desktop et attendre que le moteur soit pret.
+
+Ouvrir PowerShell :
+
+    cd "C:\Users\anass\OneDrive\Documents\GitHub\kubeAI"
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+Verifier :
+
+    docker info
+    python --version
+
+
+2. NETTOYER ET DEMARRER
+------------------------
+
+    minikube stop -p minikube
+    .\stop.ps1
+    .\start.ps1
+
+Le message "Profil kubeai-observed introuvable" est normal
+si les deux clusters ne sont pas encore crees.
+
+Attendre la fin :
+
+    KubeAI est pret. Cluster observe : kubeai-observed ; supervision : kubeai-supervision.
+    Interface : http://127.0.0.1:8080
+
+Verifier :
+
+    kubectl --context kubeai-supervision -n kubeai get pods
+    kubectl --context kubeai-observed -n collecte get pods
+
+Tous les pods doivent etre Running.
+
+
+3. OUVRIR WEBUI
+---------------
+
+Navigateur :
+
+    http://127.0.0.1:8080
+
+1. Cliquer sur Sign up si aucun compte n'existe.
+2. Creer le compte local.
+3. Se connecter.
+4. Selectionner le modele kubeai.
+
+Attendre le chargement complet de la page.
+
+
+4. QUESTION A - SANTE
+---------------------
+
+Poser dans WebUI :
+
+    Donne-moi l'etat de sante actuel du cluster, tous namespaces confondus.
+    Indique les pods malsains, les redemarrages et les donnees manquantes.
+
+Attendre 30 a 90 secondes.
+
+Ne pas poser B/C tout de suite.
+
+
+5. LANCER LA DEMO
+-----------------
+
+Dans un DEUXIEME PowerShell :
+
+    cd "C:\Users\anass\OneDrive\Documents\GitHub\kubeAI"
+    .\start-failure.ps1
+
+La demo dure environ 4 minutes.
+
+Attendre les marqueurs :
+
+    phase=normal
+    phase=anomaly_start
+    phase=recovered
+    phase=complete
+
+REGLE ABSOLUE :
+Ne poser B et C qu'apres phase=complete.
+
+Si B est posee avant, l'agent ne voit que la phase normale et repond
+"Aucun incident significatif".
+
+
+6. QUESTION B - DERNIER INCIDENT
+--------------------------------
+
+Apres phase=complete, poser :
+
+    Analyse le dernier incident termine.
+    Trouve le pod et la fenetre UTC a partir des logs et des evenements,
+    puis donne la chronologie avec les preuves.
+
+Attendre 30 a 90 secondes.
+
+La reponse doit citer :
+- applications/kubeai-demo-incident ;
+- la fenetre UTC reelle ;
+- anomaly_start ;
+- connection refused ;
+- recovered ;
+- complete.
+
+
+7. QUESTION C - CORRELATION
+---------------------------
+
+Dans la meme conversation, poser :
+
+    Pour ce meme incident, correle les logs, le CPU et les erreurs HTTP.
+    Cite les valeurs observees et les donnees manquantes.
+
+Attendre 30 a 120 secondes.
+
+Version explicite si la fenetre est ambigue :
+
+    Pour l'incident applications/kubeai-demo-incident
+    entre <DEBUT_UTC> et <FIN_UTC>,
+    correle les logs, le CPU et les erreurs HTTP.
+    Cite les valeurs observees et les donnees manquantes.
+
+Remplacer <DEBUT_UTC> et <FIN_UTC> par les horodatages affiches
+par start-failure.ps1.
+
+
+8. SI C AFFICHE ENCORE
+----------------------
+
+    Invalid or incomplete tool-calling response
+
+Ce n'est pas un probleme de donnees.
+C'est Mistral qui renvoie un appel d'outil mal forme.
+
+Dans ce cas :
+1. Renvoyer la meme question une fois.
+2. Si l'erreur revient, ouvrir une nouvelle conversation.
+3. Reposer C avec la fenetre explicite ci-dessus.
+
+
+9. FERMER
+---------
+
+    .\stop-failure.ps1
+    .\stop.ps1
+
+stop-failure supprime uniquement la demo.
+stop arrete les clusters et WebUI, sans supprimer les PVC.
+
+
+10. SEQUENCE COMPLETE
+---------------------
+
+    cd "C:\Users\anass\OneDrive\Documents\GitHub\kubeAI"
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+    minikube stop -p minikube
+    .\stop.ps1
+    .\start.ps1
+
+    # Ouvrir http://127.0.0.1:8080
+    # Creer le compte, choisir kubeai
+    # Poser A
+
+    .\start-failure.ps1
+    # Attendre phase=complete
+    # Poser B
+    # Poser C
+
+    .\stop-failure.ps1
+    .\stop.ps1
+
+
+11. CONSEILS
+------------
+
+- Garder le premier PowerShell ouvert : il maintient WebUI.
+- Utiliser le deuxieme PowerShell pour la demo.
+- Ne jamais poser B/C pendant la demo.
+- Noter les horodatages UTC affiches par start-failure.ps1.
+- Si une reponse est incomplete, attendre la fin puis relancer la question.
+- Ne pas utiliser .\scripts\start.ps1 ni .\scripts\stop.ps1 :
+  les commandes officielles sont celles de la racine.
