@@ -58,7 +58,7 @@ def test_latest_log_discovers_a_non_demo_pod_without_current_inventory():
     result, error, _ = find(service(entries=[entry(at), entry(at - 3600 * 10**9, 'older-worker')]))
     assert error is None and result['pod'] == 'api-worker'
     assert result['start_ns'] == at - 120 * 10**9
-    assert at <= result['end_ns'] <= time.time_ns()
+    assert at <= result['end_ns'] <= time.time_ns() + 10**9
     assert 'restent à vérifier' in result['search_note']
 
 

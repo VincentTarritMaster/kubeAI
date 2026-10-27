@@ -28,8 +28,17 @@ bash start-failure.sh  # lance la démo CPU/HTTP du 19 octobre dans applications
 bash stop-failure.sh   # supprime les pods de démo et remet le cluster observé au propre
 ```
 
-Sous Windows PowerShell, utiliser `./start.ps1`, `./start-failure.ps1` et
-`./stop-failure.ps1`. `scripts/start.ps1` reste un alias du démarrage commun.
+Sous Windows PowerShell, utiliser les commandes racine :
+
+```powershell
+.\start.ps1
+.\start-failure.ps1
+.\stop-failure.ps1
+.\stop.ps1             # ferme WebUI et arrête les deux clusters, sans supprimer les PVC
+```
+
+`scripts/start.ps1` et `scripts/stop.ps1` restent des alias des commandes
+racine pour les collègues qui utilisent l'ancien chemin.
 Apertus reste lancé séparément ; aucun modèle n'est téléchargé par `start`.
 
 Ouvrir <http://127.0.0.1:8080>, créer son compte si nécessaire et sélectionner
