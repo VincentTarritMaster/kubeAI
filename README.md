@@ -184,9 +184,10 @@ la validation du 22 octobre est dans
 - Les événements Kubernetes ont une rétention limitée et les séries Mimir
   dépendent de leur durée de rétention. Une absence de données n'est jamais
   interprétée comme une valeur nulle ou un état sain.
-- Le déploiement cloud, les alertes et Grafana ne sont pas encore implémentés.
-  Les traces distribuées et Tempo sont hors périmètre. Voir
-  [`CONFORMITE-EXIGENCES.md`](CONFORMITE-EXIGENCES.md).
+- Le déploiement cloud et Grafana ne sont pas déployés ; les alertes sont
+  abandonnées sur consigne du professeur. Les traces distribuées et Tempo sont
+  hors périmètre. Voir [`CONFORMITE-EXIGENCES.md`](CONFORMITE-EXIGENCES.md) et
+  [`docs/points-amelioration.md`](docs/points-amelioration.md).
 
 ## Préparation de l'environnement
 

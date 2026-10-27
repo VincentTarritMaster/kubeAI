@@ -132,7 +132,8 @@ Le pod de démonstration expose aussi `http_requests_total` et
 - Le poste Windows de 8 Go est serré ; les collègues disposant de 32 Go peuvent
   valider plus confortablement.
 - Pas de Grafana, pas d’Alertmanager, pas de Tempo ; les traces sont hors
-  périmètre et les alertes restent à intégrer.
+  périmètre. Les alertes sont abandonnées sur consigne du professeur :
+  `alerts=not_configured` est assumé.
 
 ## État de validation
 

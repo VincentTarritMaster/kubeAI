@@ -28,3 +28,8 @@
 |Réponses avec preuves|✅ `/diagnose` + sources|—|
 |Traces / Tempo|✅ Hors périmètre|Rien, c’est la consigne du professeur|
 |Remédiation automatique|✅ Non implémentée|Rien, c’est le choix read-only|
+
+> **Décisions du professeur (27 octobre 2026) :** cloud non obligatoire tant que
+> le projet tourne en local ; alertes abandonnées ; sécurité cloud hors
+> périmètre ; équipe de 3 étudiants acceptée. Voir
+> [`docs/points-amelioration.md`](docs/points-amelioration.md).

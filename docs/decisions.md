@@ -15,7 +15,7 @@ Les choix de déploiement au-delà de cette démonstration restent à valider en
 | Collecte du tronc commun | Mimir monolithique 3.2.1, Loki 3.7.8, Alloy 1.20.1, kube-state-metrics 2.20.0 ; manifests Kustomize sans Helm |
 | Métriques conteneurs | cAdvisor scrapé via le proxy de l'API Kubernetes (`job="kubernetes-cadvisor"`). Alloy reçoit `list/watch` sur les nœuds et `get` sur `nodes/proxy` ; `/cluster/status` renseigne CPU/mémoire. Ce droit élargit le RBAC mais reste en lecture seule. |
 | Traces / Tempo | Hors périmètre : le professeur a demandé de ne pas y consacrer le temps restant. |
-| Alertes | Non intégrées : aucun Alertmanager ni règles d’alerte déployées. `/capabilities` et A exposent `alerts=not_configured`. |
+| Alertes | Abandonnées sur consigne du professeur : aucun Alertmanager ni règles déployées. `/capabilities` et A exposent `alerts=not_configured` de façon assumée. |
 | Démonstration C | Le pod synthétique expose CPU, erreurs 5xx, latence HTTP et un log `connection refused` ; les hypothèses `demo_http_errors` et `connectivity` sont calculées avant toute priorisation LLM. Les preuves sont synthétiques. |
 | Stockage et rétention | PVC Mimir 10 Gio sans purge automatique des blocs (`0s`), Loki 2 Gio avec rétention et fenêtre de recherche de 30 jours, Alloy 1 Gio ; aucun nettoyage automatique d'éventuels anciens PVC Prometheus |
 | API métrique | `MIMIR_URL=http://mimir.monitoring.svc:9009/prometheus` ; client `PrometheusClient` et PromQL conservés ; `PROMETHEUS_URL` en repli |

@@ -49,8 +49,9 @@ déployé.
 
 ### Alertes
 
-Aucune source d’alertes dédiée n’est intégrée. Le rapport A contient
-explicitement `alerts: not_configured` et une limite associée.
+Aucune source d’alertes dédiée n’est intégrée : les alertes ont été abandonnées
+sur consigne du professeur. Le rapport A contient explicitement
+`alerts: not_configured` et une limite associée.
 
 ## Ce que l’agent renvoie
 
