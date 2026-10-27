@@ -102,6 +102,7 @@ def split_manifests(base, supervision, observed, supervision_ip, namespace=APPS_
             obj["metadata"]["namespace"] = STORAGE_NAMESPACE
         if kind == "ConfigMap" and name.startswith("alloy-config-"):
             alloy = obj["data"]["config.alloy"]
+            alloy = alloy.replace("\r\n", "\n")
             alloy = alloy.replace('"kubeai"', json.dumps(namespace))
             alloy = alloy.replace('loki.write "local" {', 'loki.write "local" {\n  external_labels = {"cluster" = sys.env("OBSERVED_CLUSTER")}')
             alloy = alloy.replace('prometheus.remote_write "local" {', 'prometheus.remote_write "local" {\n  external_labels = {"cluster" = sys.env("OBSERVED_CLUSTER")}')

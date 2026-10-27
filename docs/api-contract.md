@@ -1,8 +1,9 @@
 # API de l'agent kubeAI — version 0.3.0
 
 L'API est accessible dans le cluster à `http://kubeai-agent.kubeai.svc.cluster.local:8000`.
-Elle est en lecture seule. `/cluster/status` reste limité au namespace configuré
-(`kubeai` par défaut) ; `/cluster/inventory` couvre le cluster.
+Elle est en lecture seule. `/cluster/status` couvre tous les namespaces du
+cluster observé (`scope=cluster`, `namespace=*`) ; `/cluster/inventory` couvre
+également le cluster.
 Le contrat complet est généré par FastAPI sur `/openapi.json`, avec interface `/docs`.
 
 Les métriques sont lues dans Mimir avec le client compatible Prometheus existant.
@@ -111,7 +112,7 @@ La réponse JSON contient :
 | Champ | Sens |
 |---|---|
 | `observed_at` | Date UTC de début de l'observation |
-| `scope`, `namespace` | Toujours `namespace`, puis le namespace réellement observé |
+| `scope`, `namespace` | `cluster`/`*` par défaut, ou `namespace`/nom pour un périmètre ciblé |
 | `health` | `healthy`, `degraded`, `unknown` ou `empty` selon l'état des pods |
 | `data_status` | `complete` ou `partial`, indépendamment de la santé des pods |
 | `summary` | Total, Ready, malsains, terminés avec succès, en suppression et redémarrages |
@@ -215,7 +216,8 @@ Les marqueurs normaux et de récupération ne sont pas des signaux d'anomalie.
 Cette fenêtre est annoncée comme une fenêtre de
 recherche, jamais comme l'heure supposée de l'incident. En l'absence de signal,
 le rapport indique la couverture de la journée et les données manquantes.
-Chaque requête Loki garde un namespace exact et filtre le pod lorsqu'il est identifié.
+Chaque requête Loki peut cibler un namespace exact ou tous les namespaces du
+cluster observé ; le pod est filtré lorsqu'il est identifié.
 
 Une fenêtre complète reste acceptée : `début=2026-10-19T14:00:00+02:00
 fin=2026-10-19T14:30:00+02:00`. Une heure seule, « ce matin », une fenêtre

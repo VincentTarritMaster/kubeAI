@@ -155,10 +155,22 @@ listes de ressources, les compteurs et les objets d'état des sources.
 
 Quatre régressions couvrent un inventaire avec un vrai pod en JSON et SSE,
 les formes différentes du champ `pods`, et la journalisation des exceptions
-SSE avec masquage des clés. Les 415 tests de l'agent et 4 sous-tests passent.
+SSE avec masquage des clés. Les 417 tests de l'agent et 4 sous-tests passent.
 
 Après redéploiement, les deux questions retrouvées dans les conversations en
 échec ont été rejouées depuis le pod Open WebUI en streaming : état des pods
 (105 secondes) et incidents récents (102 secondes). Les deux flux ont produit
 une réponse et `[DONE]`, sans événement d'erreur. Les logs confirment que
 `get_cluster_inventory` termine sur l'inventaire réel non vide.
+
+## Audit d'intégration du 27 octobre
+
+- 417 tests agent passent après le portage tous-namespaces.
+- 20 tests de scripts Python passent ; les tests du lanceur Bash ne sont pas
+  exécutables dans cet environnement Windows (WSL/Bash refusé), mais la
+  validation macOS d'origine reste la référence.
+- /cluster/status couvre désormais scope=cluster,
+amespace=*.
+- Alloy et le RBAC couvrent tous les namespaces du cluster observé.
+- Les outils get_logs et get_events acceptent l'absence de namespace
+  (tous namespaces) ou un namespace explicite.

@@ -28,7 +28,7 @@ sequenceDiagram
 
 | Fonction | Données lues |
 |---|---|
-| `get_cluster_inventory` | Nœuds, pods, événements et consommation mesurée ; périmètre cluster ou namespace configuré. |
+| `get_cluster_inventory` | Nœuds, pods de tous les namespaces, événements et consommation mesurée ; `scope=namespace` cible le namespace configuré. |
 | `find_latest_incident` | Anomalies horodatées des logs conservés et avertissements Kubernetes ; renvoie la ressource et la fenêtre UTC. |
 | `get_incident_evidence` | Logs, événements et historique CPU/mémoire/HTTP du pod sur une fenêtre précise. |
 | `get_logs` | Extraits Loki, y compris pour un pod supprimé ; dix dernières minutes par défaut. |
@@ -43,6 +43,8 @@ conserver les marqueurs horodatés à la fraction de seconde. Les réponses
 historiques incluent une référence issue des outils (namespace/pod et bornes
 UTC), afin qu'une relance puisse reprendre le même épisode même si le modèle
 omet cette référence dans sa prose.
+Les outils de logs et d’événements acceptent un namespace explicite ; sans
+namespace, ils couvrent tous les namespaces du cluster observé.
 Les critères techniques de détection des anomalies dans les logs et les
 validations des noms/dates restent du code déterministe ; ils ne classent pas
 la question utilisateur.
@@ -80,8 +82,10 @@ sans choisir les outils à partir de mots dans la question. Les résultats volum
 réduits avec un indicateur de troncature. Les secrets détectables sont masqués.
 
 Le contrôleur exige au moins une lecture réussie avant `respond(kind=answer)` ;
-la découverte seule ne suffit pas. Le prompt impose de citer les preuves,
-de distinguer faits et hypothèses et de signaler les sources absentes.
+la découverte seule ne suffit pas. Un contrôle final rejette les valeurs
+numériques explicites (pods, redémarrages, erreurs, pourcentages, durées) qui
+n’apparaissent pas dans les résultats des outils. Le prompt impose de citer les
+preuves, de distinguer faits et hypothèses et de signaler les sources absentes.
 Cette règle ne prouve pas chaque phrase : l'interprétation dépend du modèle.
 
 Le compte Kubernetes reste en lecture seule. Aucun outil de shell, remédiation,

@@ -2,13 +2,9 @@ logging {
   level = "info"
 }
 
-// Une seule réplique découvre les pods de kubeai, sans montage de l'hôte.
+// Tous les namespaces du cluster observé.
 discovery.kubernetes "pods" {
   role = "pod"
-
-  namespaces {
-    names = ["kubeai"]
-  }
 }
 
 discovery.relabel "pod_logs" {
@@ -47,16 +43,11 @@ loki.write "local" {
   }
 }
 
-// Scrape opt-in des métriques applicatives du namespace kubeai.
+// Scrape opt-in des métriques applicatives de tous les namespaces.
 // Seuls les pods Running portant les annotations Prometheus sont ciblés.
 discovery.relabel "annotated_pods" {
   targets = discovery.kubernetes.pods.targets
 
-  rule {
-    source_labels = ["__meta_kubernetes_namespace"]
-    action        = "keep"
-    regex         = "kubeai"
-  }
   rule {
     source_labels = ["__meta_kubernetes_pod_phase"]
     action        = "keep"

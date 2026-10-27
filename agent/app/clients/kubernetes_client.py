@@ -77,4 +77,4 @@ class KubernetesClient:
         return await self._collect("/api/v1/events", self.MAX_EVENTS)
 
     async def ready(self):
-        await self._page(f"/api/v1/namespaces/{self.settings.namespace}/pods", {"limit": 1})
+        await self._page("/api/v1/pods", {"limit": 1})

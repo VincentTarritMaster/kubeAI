@@ -112,7 +112,8 @@ class TwoClusterTests(unittest.TestCase):
         binding = next(obj for obj in stacks['observed'] if obj['kind'] == 'ClusterRoleBinding' and obj['metadata']['name'] == 'kubeai-agent')
         self.assertEqual(binding['subjects'][0]['namespace'], 'applications')
         alloy = next(obj for obj in stacks['observed'] if obj['kind'] == 'ConfigMap' and obj['metadata']['name'].startswith('alloy-config-'))
-        self.assertIn('names = ["applications"]', alloy['data']['config.alloy'])
+        self.assertNotIn('namespaces {', alloy['data']['config.alloy'])
+        self.assertNotIn('names = ["applications"]', alloy['data']['config.alloy'])
 
     def test_agent_uses_only_remote_reader_and_cluster_filter(self):
         supervision = self.stacks()['supervision']

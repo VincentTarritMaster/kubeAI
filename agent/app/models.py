@@ -69,8 +69,8 @@ class Summary(BaseModel):
 
 class ClusterStatus(BaseModel):
     observed_at: datetime
-    scope: Literal["namespace"] = "namespace"
-    namespace: str
+    scope: Literal["cluster", "namespace"] = "cluster"
+    namespace: str = "*"
     health: Literal["healthy", "degraded", "unknown", "empty"]
     data_status: Literal["complete", "partial"]
     summary: Summary

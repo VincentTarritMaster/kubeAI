@@ -100,9 +100,10 @@ LLM_TIMEOUT_SECONDS=180
 ```
 
 Les deux premières variables nomment les profils Minikube. La troisième
-choisit le namespace applicatif observé et utilisé par la démo. Les noms doivent
-être différents de ceux de la supervision et des collecteurs. Les namespaces
-techniques `collecte`, `supervision` et `kubeai` sont réservés à leur rôle.
+choisit le namespace applicatif par défaut de la démo ; la collecte et les
+requêtes couvrent **tous les namespaces** du cluster observé, y compris ceux
+créés après le démarrage. Les namespaces techniques `collecte`, `supervision`
+et `kubeai` sont réservés à leur rôle.
 Modifier le `.env`, puis relancer `start`. Choisir un nom de pod dans le chat
 ne nécessite pas de modifier le `.env` ; il n'y a pas d'ID Docker à renseigner.
 

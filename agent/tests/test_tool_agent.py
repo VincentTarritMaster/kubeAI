@@ -296,3 +296,10 @@ def test_invalid_structured_output_cannot_execute_tools(decision):
     with api:
         response = api.post('/diagnose', json={'question': 'Investigate.'})
     assert response.status_code == 503 and not reads
+
+
+def test_numeric_claim_guard_rejects_unsupported_value():
+    from app.clients.base import UpstreamError
+    with pytest.raises(UpstreamError):
+        ToolAgent.verify_claims(None, '10 pods', [{'result': {'pods': 3}}])
+    ToolAgent.verify_claims(None, '3 pods', [{'result': {'pods': 3}}])

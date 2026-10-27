@@ -34,7 +34,7 @@ class ChatTests(unittest.TestCase):
         def loki(request):
             self.reads["loki"] += 1
             self.log_queries.append(request.url.params["query"])
-            self.assertIn('namespace="kubeai"', request.url.params["query"])
+            self.assertIn('pod=~', request.url.params["query"])
             self.assertEqual(request.url.params["limit"], "12")
             return httpx.Response(loki_code, json={"status": "success", "data": {
                 "resultType": "streams", "result": [{"stream": {"pod": "web", "container": "app"},
@@ -88,7 +88,7 @@ class ChatTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["model"], "kubeai-apertus")
             content = response.json()["choices"][0]["message"]["content"]
-            self.assertIn("namespace `kubeai`", content)
+            self.assertIn("Sources disponibles pour le cluster", content)
             self.assertIn("mimir", content)
             messages = self.requests[0]["messages"]
             self.assertIn('"memory_working_set_bytes":104857600', messages[-1]["content"])

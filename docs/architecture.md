@@ -92,7 +92,7 @@ cloud restent à définir ; voir [`decisions.md`](decisions.md).
 
 ## Flux de collecte
 
-- Alloy découvre les pods du namespace `kubeai`.
+- Alloy découvre les pods de tous les namespaces du cluster observé.
 - Il envoie les logs vers Loki.
 - Il scrape kube-state-metrics toutes les 15 s.
 - Il scrape les pods annotés `prometheus.io/scrape: "true"` toutes les 30 s.
@@ -119,8 +119,8 @@ Le pod de démonstration expose aussi `http_requests_total` et
 
 - **Agent** : `ClusterRole` avec `list` uniquement sur `nodes`, `pods` et
   `events`. Aucun Secret, `exec` ou verbe de modification.
-- **Alloy** : Role dans `kubeai` pour les pods et `pods/log` ; ClusterRole
-  `kubeai-alloy-cadvisor` avec `list/watch` sur `nodes` et `get` sur
+- **Alloy** : ClusterRole pour les pods et `pods/log` de tous les namespaces ;
+  ClusterRole `kubeai-alloy-cadvisor` avec `list/watch` sur `nodes` et `get` sur
   `nodes/proxy`.
 - **cAdvisor** : le droit `nodes/proxy` est plus large qu’un simple accès
   métriques, car il passe par le proxy kubelet. Il reste en lecture seule ; le

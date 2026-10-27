@@ -96,7 +96,7 @@ est dans [`docs/architecture.md`](docs/architecture.md).
 
 La [validation du 27 octobre 2026](docs/validation-two-clusters-2026-10-27.md)
 confirme le démarrage des deux clusters sur Mac, la collecte distante, les deux
-questions B/C via Apertus et le nettoyage de la démo. Les 415 tests de l'agent
+questions B/C via Apertus et le nettoyage de la démo. Les 417 tests de l'agent
 et les 31 tests des scripts passent. Les résultats suivants décrivent la
 validation historique sur Docker Desktop.
 

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
+import re
 
 from pydantic import ValidationError
 
@@ -70,6 +71,20 @@ class ToolAgent:
                 raise UpstreamError("agent", "The analysis context is full; narrow the question or time window.")
             tool["content"] = json.dumps(bounded_result(json.loads(tool["content"]), limit=1700), ensure_ascii=False)
 
+    def verify_claims(self, answer, trace):
+        """Reject explicit numeric claims absent from the collected evidence."""
+        evidence = json.dumps(trace, ensure_ascii=False)
+        numbers = {float(value.replace(",", ".")) for value in re.findall(r"(?<![\w.])\d+(?:[.,]\d+)?", evidence)}
+        claim = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?)\s*(%|pods?|restarts?|requests?|errors?|5xx|4xx|seconds?|ms)\b", re.I)
+        for match in claim.finditer(answer):
+            value = float(match.group(1).replace(",", "."))
+            if not any(abs(value - candidate) <= max(abs(value) * 0.01, 0.05) for candidate in numbers):
+                raise UpstreamError(
+                    "agent",
+                    "The model produced a numeric claim that is not present in the tool evidence; "
+                    "ask a narrower question.",
+                )
+
     async def run(self, chat):
         try:
             return await asyncio.wait_for(self._run(chat), timeout=self.settings.agent_timeout)
@@ -134,6 +149,8 @@ class ToolAgent:
                                              f"`{data['start']}` → `{data['end']}`")
                                 if reference not in windows:
                                     windows.append(reference)
+                        if arguments["kind"] == "answer":
+                            self.verify_claims(answer, trace)
                         if windows and arguments["kind"] == "answer":
                             answer += "\n\n---\n" + "\n".join(windows[-3:])
                         return answer, {"scope": "agent", "status": arguments["kind"], "observed_at": clock,

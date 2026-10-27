@@ -33,6 +33,9 @@ elif 'logs' in args:
 class DemoLauncherTests(unittest.TestCase):
     def run_launcher(self, shell="bash", context="minikube", script=SCRIPT, arguments=None,
                      fake_pwsh=False, **options):
+        if os.name == "nt":
+            shell = (r"C:\Program Files\Git\bin\bash.exe" if shell == "bash"
+                     else r"C:\Program Files\Git\usr\bin\sh.exe")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stub = root / "kubectl"
@@ -44,10 +47,12 @@ class DemoLauncherTests(unittest.TestCase):
                 pwsh.chmod(0o700)
             calls_path = root / "calls.jsonl"
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
-                       DEMO_CALLS=str(calls_path), **options)
+                       DEMO_CALLS=str(calls_path), LC_ALL="C.UTF-8", LANG="C.UTF-8", **options)
             launch_args = [context] if arguments is None else arguments
             result = subprocess.run([shell, str(script), *launch_args], cwd=directory, env=env,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True,
+                                    encoding="utf-8" if os.name == "nt" else "utf-8",
+                                    errors="replace", timeout=10)
             calls = [json.loads(line) for line in calls_path.read_text().splitlines()] if calls_path.exists() else []
             return result, calls
 

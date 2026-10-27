@@ -25,3 +25,14 @@ def test_cadvisor_rbac_is_bounded_to_read_only_node_metrics():
     assert "name: alloy" in rbac and "namespace: monitoring" in rbac
     kustomization = (ROOT / "k8s/monitoring/kustomization.yaml").read_text(encoding="utf-8")
     assert "rbac-cadvisor.yaml" in kustomization
+
+
+def test_alloy_and_log_rbac_cover_all_namespaces():
+    config = (ROOT / "k8s/monitoring/config/config.alloy").read_text(encoding="utf-8")
+    assert "namespaces {" not in config
+    assert 'regex         = "kubeai"' not in config
+    rbac = (ROOT / "k8s/monitoring/rbac-kubeai.yaml").read_text(encoding="utf-8")
+    assert "kind: ClusterRole" in rbac
+    assert "kind: ClusterRoleBinding" in rbac
+    assert "resources: [pods]" in rbac and "resources: [pods/log]" in rbac
+    assert "namespace: kubeai" not in rbac

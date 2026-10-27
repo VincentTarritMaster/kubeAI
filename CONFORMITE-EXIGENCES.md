@@ -10,17 +10,19 @@
 
 |Exigence|État|Reste à faire|
 |-|-|-|
-|**Déploiement sur infrastructure Cloud**|❌ Non|C’est le point le plus important : le projet tourne sur Docker Desktop local, pas sur un cloud|
-|Cluster Kubernetes|✅ Local|À refaire sur le cloud|
+|**Déploiement sur infrastructure Cloud**|Non requis|Le projet est validé localement sur deux clusters ; le cloud n’est pas exigé par l’équipe|
+|Cluster Kubernetes|✅ Local, deux clusters|—|
+|Deux clusters séparés|✅ Supervisé + supervisé|—|
+|Tous les namespaces|✅ Alloy, RBAC, Loki, statut|—|
 |Stack Prometheus/Mimir + Loki|✅ Mimir + Loki + Alloy|—|
 |Collecte/requêtes métriques|✅ KSM + cAdvisor + PromQL|—|
 |Collecte/requêtes logs|✅ Alloy → Loki → LogQL|—|
 |Récupération d’événements|✅ API K8s, inventaire borné|—|
-|**Alertes**|❌ `alerts=not\_configured`|Ajouter des règles d’alerte + Alertmanager, et le démontrer|
+|**Alertes**|Hors périmètre|Le professeur a retiré cette exigence|
 |Choix d’un LLM|✅ Mistral API, Apertus optionnel|—|
 |Open WebUI|✅ Modèle `kubeai`, auth|—|
-|**Orchestration des outils / réponses structurées**|⚠️ Partiel|Le backend orchestre de façon **déterministe** ; l’LLM ne fait que signaler une priorité. À documenter comme choix, ou ajouter une couche « tools »|
-|**Trois démonstrations A/B/C**|✅ Validées, preuves réelles|Captures d’écran + rapport|
+|**Orchestration des outils / réponses structurées**|✅ Tool agent LangChain|Le modèle choisit les outils et arguments ; garde-fou de preuves à maintenir|
+|**Trois démonstrations A/B/C**|✅ Validées FR/EN, preuves réelles|Captures d’écran + rapport|
 |**Évaluation exactitude / fiabilité / sécurité / limites**|⚠️ Partielle|Les validations existent, mais pas de document consolidé `docs/evaluation.md`|
 |Lecture seule|✅ RBAC + aucune remédiation|—|
 |Application de test|✅ Pod synthétique|—|

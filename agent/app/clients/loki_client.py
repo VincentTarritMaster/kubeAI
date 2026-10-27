@@ -71,16 +71,15 @@ class LokiClient:
         entries.sort(key=lambda item: int(item["timestamp_ns"]), reverse=True)
         return HistoricalLogs(entries[:self.DISCOVERY_LIMIT], len(entries) > self.DISCOVERY_LIMIT, outside)
 
-    async def recent_logs(self, pod_names: list[str]):
+    async def recent_logs(self, pod_names: list[str], namespace: str | None = None):
         # Limiter le contexte et n'interroger que des noms provenant de Kubernetes.
         if not pod_names:
             return []
-        import re
-        selector = (
-            "{namespace=" + json.dumps(self.settings.namespace)
-            + ",pod=~" + json.dumps("|".join(re.escape(name) for name in pod_names[:6]))
-            + self._cluster_selector() + "}"
-        )
+        selector = "{"
+        if namespace:
+            selector += "namespace=" + json.dumps(namespace) + ","
+        selector += ("pod=~" + json.dumps("|".join(re.escape(name) for name in pod_names[:6]))
+                     + self._cluster_selector() + "}")
         now = time.time_ns()
         response = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
             "query": selector, "start": str(now - 600 * 10**9), "end": str(now),
@@ -91,6 +90,7 @@ class LokiClient:
             raise UpstreamError("loki", "Invalid Loki result")
         try:
             entries = [{
+                "namespace": stream["stream"].get("namespace"),
                 "pod": stream["stream"].get("pod"), "container": stream["stream"].get("container"),
                 "timestamp_ns": value[0], "message": value[1][:400],
             } for stream in data["result"] for value in stream["values"]]
@@ -98,19 +98,21 @@ class LokiClient:
         except (KeyError, TypeError, ValueError) as error:
             raise UpstreamError("loki", "Invalid Loki sample") from error
 
-    async def logs_between(self, start_ns: int, end_ns: int, namespace: str,
+    async def logs_between(self, start_ns: int, end_ns: int, namespace: str | None,
                            pod: str | None = None) -> HistoricalLogs:
         if not 0 < start_ns < end_ns or end_ns - start_ns > self.MAX_RANGE_NS:
             raise ValueError("Historical Loki window must be positive and at most six hours")
         valid = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
-        if not re.fullmatch(valid, namespace) or len(namespace) > 63:
+        if namespace and (not re.fullmatch(valid, namespace) or len(namespace) > 63):
             raise ValueError("Invalid namespace for Loki selector")
         if pod and (not re.fullmatch(valid, pod) or len(pod) > 253):
             raise ValueError("Invalid pod for Loki selector")
-        selector = "{namespace=" + json.dumps(namespace)
+        parts = []
+        if namespace:
+            parts.append("namespace=" + json.dumps(namespace))
         if pod:
-            selector += ",pod=" + json.dumps(pod)
-        selector += self._cluster_selector() + "}"
+            parts.append("pod=" + json.dumps(pod))
+        selector = "{" + (",".join(parts) if parts else 'namespace=~".+"') + self._cluster_selector() + "}"
         response = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
             # Loki's end is exclusive. Query one nanosecond beyond the user's
             # inclusive bound, then still filter returned samples to end_ns.
@@ -127,14 +129,15 @@ class LokiClient:
         try:
             for stream in data["result"]:
                 labels = stream["stream"]
-                if not isinstance(labels, dict) or labels.get("namespace") != namespace:
+                if (not isinstance(labels, dict)
+                        or (namespace and labels.get("namespace") != namespace)):
                     continue
                 if pod and labels.get("pod") != pod:
                     continue
                 for raw_stamp, message in stream["values"]:
                     stamp = int(raw_stamp)
                     if start_ns <= stamp <= end_ns and isinstance(message, str):
-                        entries.append({"namespace": namespace, "pod": labels.get("pod"),
+                        entries.append({"namespace": labels.get("namespace"), "pod": labels.get("pod"),
                                         "container": labels.get("container"),
                                         "timestamp_ns": str(raw_stamp), "message": message[:400]})
                         if len(entries) > self.MAX_LINES:

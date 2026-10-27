@@ -26,7 +26,7 @@ class InventoryArgs(Arguments):
 
 class TargetArgs(Arguments):
     namespace: str | None = Field(default=None, max_length=63, pattern=r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$",
-                                  description="Omit to use the configured namespace.")
+                                  description="Omit to search all namespaces.")
     pod: str | None = Field(default=None, max_length=253, pattern=r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$",
                             description="Omit unless a real pod name was given by the user or returned by a tool. Never guess.")
 
@@ -120,7 +120,7 @@ class ObservabilityTools:
 
     async def inventory(self, scope="cluster"):
         if scope == "namespace":
-            return (await self.diagnosis.cluster_status.status()).model_dump(mode="json")
+            return (await self.diagnosis.cluster_status.status(self.settings.namespace)).model_dump(mode="json")
         inventory, usage = await asyncio.gather(
             self.diagnosis.cluster_status.inventory(),
             self.diagnosis.cluster_status.prometheus.cluster_usage(datetime.now(timezone.utc).timestamp()),
@@ -147,11 +147,10 @@ class ObservabilityTools:
                 "next_step": "Read get_incident_evidence with these exact resource and time bounds."}
 
     async def logs(self, namespace=None, pod=None, start=None, end=None):
-        namespace = self.target(namespace)
         start, end = self.window(start, end)
         logs = await self.diagnosis.loki.logs_between(int(start.timestamp() * 10**9), int(end.timestamp() * 10**9),
                                                      namespace, pod)
-        return {"namespace": namespace, "pod": pod, "start": start, "end": end,
+        return {"namespace": namespace or "*", "pod": pod, "start": start, "end": end,
                 "entries": logs.entries, "truncated": logs.truncated, "outside_window": logs.outside_window}
 
     async def metrics(self, namespace=None, pod=None, start=None, end=None):
@@ -165,11 +164,11 @@ class ObservabilityTools:
     async def events(self, namespace=None, pod=None, start=None, end=None):
         start, end = self.window(start, end, 3600)
         inventory = await self.diagnosis.cluster_status.inventory()
-        namespace = self.target(namespace)
         rows = [event.model_dump(mode="json") for event in inventory.events or []
-                if event.namespace == namespace and (not pod or event.involved_name == pod)
+                if (not namespace or event.namespace == namespace)
+                and (not pod or event.involved_name == pod)
                 and event.observed_at and start <= event.observed_at <= end]
-        return {"namespace": namespace, "pod": pod, "start": start, "end": end,
+        return {"namespace": namespace or "*", "pod": pod, "start": start, "end": end,
                 "events": rows[:30], "source": inventory.sources["events"].model_dump(),
                 "truncated": len(rows) > 30}
 
