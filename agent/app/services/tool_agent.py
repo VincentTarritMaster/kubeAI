@@ -112,11 +112,23 @@ class ToolAgent:
                 "Do not repeat completed calls. If the evidence answers the user's question, finish with respond. "
                 "Request another function only for a specific missing fact.")
             self.bound_context(messages, question_message)
-            decision = await self.diagnosis.llm.tool_completion({
+            payload = {
                 "messages": messages, "tools": self.tools.schemas, "tool_choice": "required",
                 "parallel_tool_calls": False, "temperature": 0,
                 "max_tokens": min(1024, max(512, chat.max_tokens or chat.max_completion_tokens or 768)),
-            })
+            }
+            try:
+                decision = await self.diagnosis.llm.tool_completion(payload)
+            except UpstreamError as error:
+                if error.source != "llm" or "appel d'outil valide" not in error.message:
+                    raise
+                logger.warning("Malformed tool-call response; retrying once")
+                messages.append({"role": "user", "content":
+                                 "The previous function call was invalid. Return exactly one valid function call "
+                                 "with a JSON arguments object, or finish with respond."})
+                decision = await self.diagnosis.llm.tool_completion({
+                    **payload, "messages": messages,
+                })
             calls = decision.get("tool_calls", [])
             if not calls:
                 messages.append({"role": "user", "content": "Use the provided functions. Finish with respond; do not emit unverified prose."})

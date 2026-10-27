@@ -129,7 +129,12 @@ class LLMService:
                 raise ValueError("Invalid assistant content")
             return {"role": "assistant", "content": content or "", **({"tool_calls": calls} if calls else {})}
         except (KeyError, IndexError, TypeError, ValueError, RecursionError) as error:
-            raise UpstreamError("llm", "Invalid or incomplete tool-calling response") from error
+            raise UpstreamError(
+                "llm",
+                "Le fournisseur " + self.provider_name + " n'a pas renvoyé un appel d'outil valide "
+                "(réponse incomplète). Aucune donnée n'a été lue pour cette question. "
+                "Réessayez dans une nouvelle conversation.",
+            ) from error
         except httpx.TimeoutException as error:
             raise UpstreamError("llm", "Tool-calling response timed out") from error
         except httpx.RequestError as error:
