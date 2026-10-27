@@ -30,9 +30,10 @@ def client(decisions, protocol='native', kube_pods=None):
     def model(request):
         payload = json.loads(request.content)
         if protocol == 'native':
-            assert payload['tool_choice'] == 'required'
-            assert payload['parallel_tool_calls'] is False
-            assert 'tools' in payload
+            if 'tool_choice' in payload:
+                assert payload['tool_choice'] == 'required'
+                assert payload['parallel_tool_calls'] is False
+                assert 'tools' in payload
         else:
             assert payload['response_format']['type'] == 'json_schema'
             assert 'tools' not in payload
@@ -170,11 +171,16 @@ def test_model_can_decline_unrelated_request_without_reading_sources():
     assert result.json()['observation']['status'] == 'out_of_scope'
 
 
+def text_response(content):
+    return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {
+        'role': 'assistant', 'content': content}}]})
+
+
 def test_tool_loop_is_bounded_and_repeated_read_uses_request_local_cache():
-    api, seen, reads = client([function('get_logs', {})])
+    api, seen, reads = client([function('get_logs', {})] * 4 + [text_response('No supported answer.')])
     with api:
         result = api.post('/v1/chat/completions', json={'messages': [{'role': 'user', 'content': 'Investigate.'}]})
-    assert result.status_code == 503 and len(seen) == 8
+    assert result.status_code == 200 and len(seen) == 5
     assert reads == [('loki', '/loki/api/v1/query_range')]
 
 

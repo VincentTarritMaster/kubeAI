@@ -85,6 +85,36 @@ class ToolAgent:
                     "ask a narrower question.",
                 )
 
+    async def finalize(self, chat, trace):
+        """Answer from already-collected evidence when the tool loop does not stop."""
+        evidence = bounded_result({"tool_results": trace}, self.sensitive(), limit=12000)
+        system = ("You are kubeAI. Answer the user's latest question using only the supplied tool evidence. "
+                  "Reply in the language of that question. State missing data explicitly. "
+                  "Never invent a pod, timestamp, metric or cause.")
+        payload = {
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps({
+                    "question": chat.messages[-1].content,
+                    "evidence": evidence,
+                }, ensure_ascii=False)},
+            ],
+            "temperature": 0,
+            "max_tokens": min(1024, max(512, chat.max_tokens or chat.max_completion_tokens or 768)),
+        }
+        answer = await self.diagnosis.llm.complete(payload)
+        try:
+            text = answer["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as error:
+            raise UpstreamError("agent", "Le fournisseur n'a pas produit de synthèse exploitable.") from error
+        if not isinstance(text, str) or not text.strip():
+            raise UpstreamError("agent", "Le fournisseur n'a pas produit de synthèse exploitable.")
+        text = redact_text(text, self.sensitive())
+        self.verify_claims(text, trace)
+        return text, {"scope": "agent", "status": "answer",
+                      "observed_at": datetime.now(timezone.utc).isoformat(),
+                      "namespace": self.settings.namespace, "tools": trace}
+
     async def run(self, chat):
         try:
             return await asyncio.wait_for(self._run(chat), timeout=self.settings.agent_timeout)
@@ -107,6 +137,8 @@ class ToolAgent:
         known = set()
         tool_count = 0
         for step in range(self.settings.agent_max_steps):
+            if successful >= 2 and tool_count >= 4:
+                return await self.finalize(chat, trace)
             messages[0]["content"] = (preface + f"\nExecution progress: {successful} fresh evidence reads; "
                 f"{self.settings.agent_max_steps - step} decisions remaining. "
                 "Do not repeat completed calls. If the evidence answers the user's question, finish with respond. "
@@ -188,4 +220,6 @@ class ToolAgent:
                 trace.append({"name": name, "result": safe})
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": name,
                                  "content": json.dumps(safe, ensure_ascii=False)})
-        raise UpstreamError("agent", "The tool budget was reached before a supported answer was produced.")
+        if successful:
+            return await self.finalize(chat, trace)
+        raise UpstreamError("agent", "Le budget d'outils est épuisé avant toute preuve exploitable.")
