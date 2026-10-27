@@ -1,79 +1,34 @@
-# Chaîne LangChain
+# LangChain et appels de fonctions
 
-KubeAI utilise **FastAPI** pour l’API et **LangChain Core 1.7** pour la chaîne de
-sélection/priorisation du LLM. Ce n’est pas un agent LangChain autonome : les
-outils Kubernetes, Mimir et Loki restent appelés par le backend, avec des bornes
-et des allowlists.
+Le chat courant utilise **LangChain Core** pour décrire des fonctions de lecture
+avec `StructuredTool` et des schémas Pydantic, puis les convertir au format
+du fournisseur via `convert_to_openai_tool`.
 
-## Pipeline
+Le modèle choisit les fonctions et leurs arguments à partir de la conversation.
+Le contrôleur FastAPI valide les appels, exécute les lectures Kubernetes,
+Mimir et Loki, puis renvoie les résultats au modèle. Celui-ci peut demander
+d'autres preuves avant de terminer avec `respond`.
 
-```text
-ChatPromptTemplate
-  system : instructions serveur + schéma JSON
-  user   : observations déjà bornées et redactées
-        |
-        v
-RunnableLambda : appel LLM borné
-  - Mistral : response_format json_schema strict
-  - local   : paramètres chat ordinaires
-        |
-        v
-RunnableLambda : validation de la sortie
-  - JSON uniquement
-  - clé et valeur dans l’allowlist
-  - rejet du texte libre, des clés dupliquées et des réponses tronquées
-        |
-        v
-une valeur d’énumération, jamais de prose
-```
+Le [fonctionnement complet de l'agent](agent-tools.md) décrit les outils,
+les langues, le contexte et les limites d'exécution.
 
-Le code est dans
-[`agent/app/services/llm_service.py`](../agent/app/services/llm_service.py).
+## Code
 
-## Pourquoi le transport HTTP reste direct
+- `agent/app/services/observability_tools.py` : registre des outils et schémas.
+- `agent/app/services/tool_agent.py` : boucle de décision et d'exécution.
+- `agent/app/services/llm_service.py` : transport HTTP et validation des réponses natives.
+- `agent/app/prompts/tool_agent.txt` : instructions du modèle.
 
-LangChain orchestre le prompt, l’appel et la validation. Le transport HTTP reste
-`httpx` pour :
+Le profil local utilise une décision JSON contrainte (`name`, `arguments`) ;
+Mistral utilise les appels natifs. Les deux formats passent par le même registre
+et le même contrôleur. Le transport reste `httpx` pour conserver l'authentification fournisseur, les
+timeouts et les erreurs sanitisées. Le contrôleur utilise ses propres budgets
+et validations. Aucun `AgentExecutor` n'est requis pour cette boucle.
 
-- conserver le streaming SSE d’Open WebUI ;
-- envoyer le `response_format` JSON Schema attendu par Mistral ;
-- garder les erreurs fournisseur sanitisées et les timeouts existants ;
-- éviter un agent qui exécuterait des outils non bornés.
+## Compatibilité
 
-C’est une chaîne LangChain, pas un `AgentExecutor` avec des tools dynamiques.
-
-## Sécurité
-
-- Le prompt système et l’allowlist viennent du code serveur.
-- Les observations sont redactées avant l’appel.
-- Le LLM ne peut retourner qu’une valeur d’énumération déjà calculée.
-- Une sortie invalide lève `UpstreamError` et le diagnostic déterministe reste
-  disponible.
-- Aucune remédiation, aucun `exec`, aucun accès Secrets.
-
-## Vérification
-
-`/capabilities` expose :
-
-```json
-"llm": {
-  "provider": "mistral-api",
-  "model": "mistral-small-2603",
-  "framework": "langchain",
-  "configured": true
-}
-```
-
-Les tests de sélection couvrent le schéma strict, le JSON local, les fences,
-les clés dupliquées, les valeurs hors allowlist, les réponses tronquées et les
-erreurs HTTP sanitisées. La suite complète compte 360 tests + 6 tests loopback.
-
-## Limite à assumer
-
-Le sujet parle d’« orchestration des outils ». Ici :
-
-- les outils sont choisis par le routeur FastAPI, pas par le LLM ;
-- LangChain apporte la chaîne de prompt et la validation structurée ;
-- le LLM ne fait que prioriser une hypothèse.
-
-C’est un choix de fiabilité et de sécurité, à expliquer dans le rapport.
+Le mode explicite `KUBEAI_CHAT_MODE=legacy` conserve la précédente chaîne
+`ChatPromptTemplate` → appel borné → sélection dans une allowlist, avec des
+réponses déterministes. Ses anciens tests restent exécutés. Le processus et
+le déploiement utilisent par défaut `agent`, où le modèle choisit les outils
+et rédige la réponse.

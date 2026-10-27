@@ -34,7 +34,8 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
             httpx.AsyncClient(base_url=config.loki_url, timeout=config.request_timeout,
                               trust_env=False, transport=loki_transport) as loki_http,
             httpx.AsyncClient(base_url=config.llm_base_url.rstrip("/") + "/", timeout=config.llm_timeout,
-                              trust_env=False, transport=llm_transport) as llm_http,
+                              trust_env=False, transport=llm_transport,
+                              limits=httpx.Limits(max_keepalive_connections=0 if config.llm_provider == "local" else 20)) as llm_http,
         ):
             application.state.cluster_status = ClusterStatusService(
                 KubernetesClient(kubernetes_http, config), PrometheusClient(prometheus_http, config),

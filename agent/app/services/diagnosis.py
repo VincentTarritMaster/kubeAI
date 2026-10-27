@@ -142,7 +142,7 @@ class DiagnosisService:
         content += json.dumps(history, ensure_ascii=False, separators=(",", ":"))
         content += "\n\nOBSERVATION_JSON (freshly read for this question, sole evidence of current state):\n"
         content += json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-        content += "\n\nCURRENT_KUBERNETES_STATE:\nNamespace health: " + context["health"]
+        content += "\n\nCURRENT_KUBERNETES_STATE:\nCluster health: " + context["health"]
         content += "; unhealthy pods: " + str(context["summary"]["unhealthy"])
         content += "; pods in the current inventory: " + ", ".join(pod["name"] for pod in context["pods"]) + "."
         content += "\n\nCURRENT_QUESTION:\n" + redact_text(chat.messages[current].content, sensitive_values)
@@ -156,8 +156,9 @@ class DiagnosisService:
 def source_note(context, *, zone=DEFAULT_ZONE):
     sources = [name + (" (partielle)" if item["status"] == "partial" else "")
                for name, item in context["sources"].items() if item["status"] != "unavailable"]
-    note = ("\n\n---\nSources disponibles pour le namespace `" + context["namespace"] +
-            "` ; relevé le " + full_time(context["observed_at"], zone) + " : " + ", ".join(sources) + ".")
+    note = ("\n\n---\nSources disponibles pour "
+            + ("le cluster" if context["namespace"] == "*" else "le namespace `" + context["namespace"] + "`")
+            + " ; relevé le " + full_time(context["observed_at"], zone) + " : " + ", ".join(sources) + ".")
     if context["warnings"]:
         unavailable = [name for name, item in context["sources"].items() if item["status"] == "unavailable"]
         note += "\nDonnées partielles : " + (

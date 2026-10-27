@@ -337,6 +337,8 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
              f"**Incident analysé :** `{resource}`.", "",
              *day_heading(start_local, zone, mixed_offset=len(day_offsets[start_local.date()]) > 1),
              f"**Période observée :** {period}.", ""]
+    if report.get("discovery_note"):
+        lines[4:4] = ["**Recherche automatique :** " + report["discovery_note"], ""]
     if signal:
         lines.append(f"**Problème observé :** anomalie signalée dans les logs Loki "
                      f"à {clock(signal['timestamp'])}.")
@@ -451,6 +453,8 @@ async def correlate(service, chat):
     report = assess(report, metrics)
     if window.get("search_note"):
         report["correlation_limits"].append(window["search_note"])
+        if window.get("automatic_discovery"):
+            report["discovery_note"] = window["search_note"]
     provider_name = service.llm.provider_name
     sensitive_values = service.sensitive_values()
     can_call = bool(sensitive_values) or service.llm.settings.llm_provider == "local"

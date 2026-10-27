@@ -9,7 +9,17 @@ import unicodedata
 
 
 def plain(text):
+    # Garder la séparation des élisions françaises : supprimer U+2019 faisait
+    # de « l’incident » un seul mot « lincident », invisible pour le routage.
+    text = text.translate(str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "＇": "'"}))
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+def latest_incident_request(text):
+    return bool(re.search(
+        r"\b(?:dernier|derniere|plus recent|plus recente|latest|last|most recent)\s+"
+        r"(?:incident|panne|crash|anomalie|failure)\b"
+        r"|\b(?:incident|panne|anomalie)\s+(?:le |la )?plus recent(?:e)?\b", plain(text)))
 
 
 def explicit_intent(text):
@@ -25,7 +35,7 @@ def explicit_intent(text):
         return "cluster"
     if causal:
         return "correlation"
-    if historical or re.search(r"(?:que s.est.il passe|a.t.il redemarre|a redemarre|crash|panne|debut=)", text):
+    if historical or latest_incident_request(text) or re.search(r"(?:que s.est.il passe|a.t.il redemarre|a redemarre|crash|panne|debut=)", text):
         return "incident"
     if (re.search(r"\bpods?\s+[a-z0-9][a-z0-9-]*", text)
             and re.search(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{1,2}\s+[a-z]+\s+\d{4})\b", text)):

@@ -10,8 +10,8 @@ pas, et comment le vérifier. Elle sert de référence pour la soutenance et pou
 |---|---|---|---|
 | État des pods, nœuds, contrôleurs | kube-state-metrics (KSM) | 15 s | Santé A, inventaire, redémarrages |
 | CPU/mémoire des conteneurs | cAdvisor via le proxy de l’API Kubernetes | 30 s | `/cluster/status`, B/C |
-| Métriques applicatives opt-in | Pods `kubeai` annotés `prometheus.io/scrape: "true"` | 30 s | CPU du processus, compteurs HTTP de la démo |
-| Logs des pods `kubeai` | API Kubernetes → Alloy → Loki | continu | Chronologie B, preuves |
+| Métriques applicatives opt-in | Pods de tous les namespaces annotés `prometheus.io/scrape: "true"` | 30 s | CPU du processus, compteurs HTTP de la démo |
+| Logs de tous les pods | API Kubernetes → Alloy → Loki | continu | Chronologie B, preuves |
 | Événements Kubernetes | API Kubernetes (lecture seule) | à la demande | Chronologie B, avertissements A |
 
 Les manifests sont dans [config.alloy](../k8s/monitoring/config/config.alloy),
@@ -57,8 +57,8 @@ sur consigne du professeur. Le rapport A contient explicitement
 
 ### `/cluster/status`
 
-- Santé Kubernetes du namespace `kubeai` : `healthy`, `degraded`, `unknown` ou
-  `empty` ;
+- Santé Kubernetes de tous les namespaces (`scope=cluster`, `namespace=*`) :
+  `healthy`, `degraded`, `unknown` ou `empty` ;
 - résumé des pods et redémarrages ;
 - métriques CPU/mémoire via cAdvisor ; `null` si le scrape est indisponible ;
 - `data_status: partial` lorsque des mesures manquent.

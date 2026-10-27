@@ -1,9 +1,10 @@
 # kubeAI — configuration Mistral API
 
 Le projet collectif de Kevin, Vincent et Anass utilise Mistral API comme
-fournisseur principal du chat. Le chemin est Open WebUI → FastAPI → observations
-Kubernetes/Mimir/Loki → Mistral API → réponse. Le modèle n'a aucun accès direct
-au cluster ni à des outils d'écriture.
+fournisseur configurable du chat. Le chemin courant est Open WebUI → FastAPI
+→ modèle → fonctions de lecture validées → Kubernetes/Mimir/Loki → modèle → réponse.
+Le modèle choisit les fonctions ; il n'a aucun accès à des outils d'écriture.
+Voir [la boucle d'agent](agent-tools.md).
 
 ## Modèle et paramètres
 
@@ -51,16 +52,14 @@ ce Secret et ne font aucun appel réseau au fournisseur.
 
 ## Données transmises et limites du filtrage
 
-Pour une question nécessitant le modèle, le backend envoie uniquement son prompt
-de règles, la question actuelle, au plus quatre anciennes questions de l'utilisateur
-et une observation fraîche du namespace autorisé. Les réponses antérieures de
-l'assistant, les autres namespaces, les UID et nœuds des pods, les logs complets
-et les Secrets Kubernetes ne sont pas inclus. L'observation contient l'heure du
-relevé, l'état et le résumé des pods, l'état des sources, les avertissements,
-au plus 20 pods avec les incidents prioritaires, leurs états et métriques
-CPU/mémoire, puis au plus 12 lignes de 400 caractères sur dix minutes et six
-pods. Une source manquante reste marquée indisponible et une mesure absente reste
-`null`.
+En mode `agent`, le backend transmet ses instructions, jusqu'à six messages
+récents précédant la question et les résultats bornés des fonctions choisies.
+Les anciens messages assistant sont donc transmis comme contexte, sans servir
+de preuve. Un inventaire global peut inclure des nœuds et pods de plusieurs
+namespaces du cluster observé. Les outils de logs et de métriques restent
+filtrés par cluster et par leur cible. Les extraits Loki, mesures et événements
+sont réduits avant transmission ; une source absente reste explicitement
+indisponible. Aucun outil ne permet de lire des Secrets Kubernetes.
 
 Le filtre masque les valeurs connues de la clé, champs structurés sensibles,
 Bearer/JWT/clés privées détectables, mots de passe explicites, courriels, adresses
@@ -87,13 +86,11 @@ Open WebUI garde son URL interne vers FastAPI et sélectionne le modèle virtuel
 `kubeai`. L'identifiant historique `kubeai-apertus` est encore accepté pour
 les conversations sauvegardées ; il désigne le fournisseur actuellement actif.
 Le serveur conserve `/v1/models`, `/v1/chat/completions` JSON et SSE ainsi que
-`/diagnose`. Les réponses déterministes de santé sont produites sans appel LLM.
-La priorisation passe par une chaîne **LangChain Core** bornée ; le transport
-HTTP reste direct pour le streaming et le JSON Schema Mistral (voir
-[`langchain.md`](langchain.md)).
-Les erreurs 401/403, 429, 5xx, timeout, connexion et réponse invalide sont
-converties en messages français sans corps fournisseur ni clé. Aucune relance
-automatique ne risque de multiplier les appels facturables.
+`/diagnose`. En mode `agent`, le modèle décide des lectures via les appels
+natifs de fonctions, puis rédige sa réponse dans la langue de la question.
+LangChain Core décrit les fonctions et leurs arguments ; le contrôleur valide
+et exécute les appels. Le mode explicite `legacy` conserve l'ancien parcours
+avec priorisation et bilans déterministes. Voir [LangChain](langchain.md).
 
 Le prompt demande cinq rubriques françaises : état, preuves horodatées et
 sources, hypothèses, informations manquantes, vérifications. Les réponses LLM
@@ -101,8 +98,14 @@ doivent être contrôlées sur des données réelles approuvées : un prompt ne
 garantit ni l'exactitude, ni l'exhaustivité, ni le respect parfait du format.
 Les événements Kubernetes et les démonstrations A/B/C sont intégrés. Grafana et
 le déploiement cloud restent hors de cette étape ; les alertes ont été
-abandonnées sur consigne du professeur ; les traces
-distribuées et Tempo sont hors périmètre.
+abandonnées sur consigne du professeur ; les traces distribuées et Tempo sont
+hors périmètre.
+
+Les erreurs fournisseur sont sanitisées. Le budget par défaut est de huit appels
+de fonctions et 180 secondes, avec le timeout fournisseur appliqué à chaque
+appel. Une analyse peut donc effectuer plusieurs générations. La validation
+réelle du nouveau parcours a été effectuée avec Apertus local ; aucun essai
+facturable de ce parcours avec Mistral n'a été effectué ici.
 
 ## Profil Apertus facultatif
 

@@ -69,8 +69,8 @@ class Summary(BaseModel):
 
 class ClusterStatus(BaseModel):
     observed_at: datetime
-    scope: Literal["namespace"] = "namespace"
-    namespace: str
+    scope: Literal["cluster", "namespace"] = "cluster"
+    namespace: str = "*"
     health: Literal["healthy", "degraded", "unknown", "empty"]
     data_status: Literal["complete", "partial"]
     summary: Summary
@@ -266,3 +266,25 @@ class ChatRequest(BaseModel):
 
 class DiagnosisRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
+
+
+class AgentChatRequest(BaseModel):
+    """Bound the transport without classifying or routing the user's words."""
+    model: str = "kubeai"
+    messages: list[ChatMessage] = Field(min_length=1, max_length=CHAT_HISTORY_MESSAGE_LIMIT)
+    stream: bool = False
+    temperature: float = Field(default=0.2, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, ge=1, le=1024)
+    max_completion_tokens: int | None = Field(default=None, ge=1, le=1024)
+
+    @model_validator(mode="before")
+    @classmethod
+    def bound_history(cls, data):
+        return ChatRequest.reduce_history(data)
+
+    @model_validator(mode="after")
+    def require_question(self):
+        latest = next((item for item in reversed(self.messages) if item.role == "user"), None)
+        if latest is None or not latest.content.strip():
+            raise ValueError("A non-empty user message is required")
+        return self

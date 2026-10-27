@@ -207,10 +207,12 @@ class ClusterStatusService:
         self.kubernetes = kubernetes
         self.prometheus = prometheus
 
-    async def status(self) -> ClusterStatus:
+    async def status(self, namespace: str | None = None) -> ClusterStatus:
         observed_at = datetime.now(timezone.utc)
+        collection = (self.kubernetes.list_namespace_pods() if namespace
+                      else self.kubernetes.list_all_pods())
         pod_collection, snapshot = await asyncio.gather(
-            self.kubernetes.list_namespace_pods(), self.prometheus.snapshot(observed_at.timestamp()),
+            collection, self.prometheus.snapshot(observed_at.timestamp()),
             return_exceptions=True,
         )
         if isinstance(pod_collection, Exception):
@@ -249,7 +251,8 @@ class ClusterStatusService:
         if pod_collection.truncated and health != "degraded":
             health = "unknown"
         return ClusterStatus(
-            observed_at=observed_at, namespace=self.kubernetes.settings.namespace,
+            observed_at=observed_at, scope="namespace" if namespace else "cluster",
+            namespace=namespace or "*",
             health=health, data_status="partial" if warnings else "complete", summary=summary,
             sources={"kubernetes": SourceStatus(
                 status="partial" if pod_collection.truncated else "ok",

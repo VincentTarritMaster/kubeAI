@@ -1,19 +1,19 @@
 """Render current namespace health facts without asking a model to reinterpret them."""
 import re
-import unicodedata
 
 from app.models import ChatRequest
+from app.conversation import plain
 
 
 def health_question(chat: ChatRequest):
     questions = [message.content for message in chat.messages if message.role == "user"]
     question = questions[-1]
-    normalized = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode().lower()
+    normalized = plain(question)
     if re.match(r"\s*(et maintenant|et ce pod|and now|what about now|how about now|now\b)", normalized):
         previous = next((item for item in reversed(questions[:-1]) if not re.match(
             r"\s*(et maintenant|and now|what about now|how about now|now\b)", item, re.I)), "")
         question = previous + "\n" + question
-        normalized = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode().lower()
+        normalized = plain(question)
     if not re.search(
         r"\b(health|healthy|unhealthy|sante|sain|problemes?|problems?|failing)\b"
         r"|\b(state|status|etat)\b.*\b(namespace|kubeai|pod)\b"

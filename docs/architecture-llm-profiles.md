@@ -28,6 +28,11 @@ Open WebUI ── kubeai ── FastAPI (un seul Deployment)
 Alloy ── métriques ──> Mimir       Alloy ── logs ──> Loki
 ```
 
+Le chat courant utilise [un agent à outils](agent-tools.md). Le modèle choisit
+les lectures et rédige sa réponse dans la langue de la question. Le protocole
+`auto` utilise les appels natifs pour Mistral et un JSON typé pour le profil
+local ; la boucle et les fonctions sont communes.
+
 ## Configuration sur Windows et macOS
 
 Le backend charge le `.env` à la racine du dépôt uniquement si
@@ -68,7 +73,7 @@ Cette adresse loopback ne convient que si le serveur LLM est joignable depuis le
 même environnement. Dans un pod Kubernetes, `127.0.0.1` désigne le pod FastAPI ;
 il faut configurer `LLM_BASE_URL` vers un endpoint réseau privé joignable. Pour
 le serveur Apertus prévu par Vincent, le Mac héberge llama.cpp, et Minikube le
-joint via `host.minikube.internal:11435`. Les scripts existants de préparation
+joint via `host.docker.internal:11435` avec le driver Docker sur macOS. Les scripts existants de préparation
 et de lancement Apertus ciblent macOS Apple Silicon et téléchargent environ
 5,06 Go de poids : ils ne doivent pas être lancés sur le PC Windows de 8 Go.
 
@@ -168,7 +173,7 @@ Sur un Mac adapté, les commandes actuelles de préparation du modèle sont
 documentées dans [`../llm/README.md`](../llm/README.md). Elles sont manuelles,
 téléchargent les poids puis démarrent llama.cpp. Après démarrage explicite du
 serveur, configurer le backend avec `LLM_PROVIDER=local`,
-`LLM_BASE_URL=http://host.minikube.internal:11435/v1`, `LLM_MODEL=apertus-8b`,
+`LLM_BASE_URL=http://host.docker.internal:11435/v1`, `LLM_MODEL=apertus-8b`,
 `LLM_API_KEY_FILE=/var/run/secrets/kubeai-llm/api-key` et un délai de 180 secondes.
 Le secret local est conservé dans le Secret `kubeai-llm`; il n'est jamais stocké
 dans la ConfigMap. D'autres serveurs locaux sans authentification n'ont pas

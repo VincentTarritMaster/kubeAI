@@ -37,7 +37,7 @@ class AgentAPITests(unittest.TestCase):
     def client(self, pods=None, *, kubernetes=None, prometheus=None, settings=None):
         def kube(request):
             self.assertEqual(request.method, "GET")
-            self.assertEqual(request.url.path, "/api/v1/namespaces/kubeai/pods")
+            self.assertEqual(request.url.path, "/api/v1/pods")
             return httpx.Response(200, json={"metadata": {}, "items": pods if pods is not None else [pod()]})
 
         def prom(request):
@@ -65,8 +65,8 @@ class AgentAPITests(unittest.TestCase):
             result = client.get("/cluster/status")
             self.assertEqual(result.status_code, 200)
             body = result.json()
-            self.assertEqual(body["scope"], "namespace")
-            self.assertEqual(body["namespace"], "kubeai")
+            self.assertEqual(body["scope"], "cluster")
+            self.assertEqual(body["namespace"], "*")
             self.assertEqual(body["health"], "healthy")
             self.assertEqual(body["data_status"], "complete")
             self.assertEqual(body["sources"]["mimir"]["status"], "ok")
