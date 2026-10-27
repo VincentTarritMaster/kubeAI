@@ -2,12 +2,24 @@
 param([string]$Context = '', [string]$Namespace = '')
 $ErrorActionPreference = 'Stop'
 if (-not $Context) {
-    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+    $python = if (Get-Command python -ErrorAction SilentlyContinue) {
+        'python'
+    } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+        'python3'
+    } else {
+        throw 'Python est introuvable dans le PATH.'
+    }
     $Context = & $python (Join-Path $PSScriptRoot 'scripts/cluster-context.py') observed
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 if (-not $Namespace) {
-    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+    $python = if (Get-Command python -ErrorAction SilentlyContinue) {
+        'python'
+    } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+        'python3'
+    } else {
+        throw 'Python est introuvable dans le PATH.'
+    }
     $Namespace = & $python (Join-Path $PSScriptRoot 'scripts/cluster-context.py') namespace
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

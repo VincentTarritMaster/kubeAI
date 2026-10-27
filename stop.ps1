@@ -26,9 +26,12 @@ if (Test-Path -LiteralPath $state) {
 }
 
 if (-not $KeepClusters) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     foreach ($profile in @('kubeai-observed', 'kubeai-supervision')) {
         & minikube stop -p $profile 2>$null
     }
+    $ErrorActionPreference = $previous
 }
 
 Write-Host 'KubeAI arrêté. Les PVC, Mimir et Loki sont conservés.'
