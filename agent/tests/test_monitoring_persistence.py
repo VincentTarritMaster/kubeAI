@@ -36,6 +36,6 @@ def test_start_and_stop_never_delete_monitoring_claims_or_namespace():
 
 def test_demo_replay_replaces_only_its_finished_pod():
     script = (ROOT / "scripts/run-demo-incident.ps1").read_text(encoding="utf-8")
-    assert "-n','kubeai','delete','pod','kubeai-demo-incident'" in script
+    assert "-n',$Namespace,'delete','pod','kubeai-demo-incident'" in script
     assert "delete pvc" not in script.lower()
     assert "phase=complete" in script

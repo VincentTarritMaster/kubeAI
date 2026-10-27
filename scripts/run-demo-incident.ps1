@@ -1,9 +1,21 @@
 #Requires -Version 5.1
-param()
+param([string]$Context = '', [string]$Namespace = '')
+if (-not $Context) {
+    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+    $Context = & $python (Join-Path $PSScriptRoot 'cluster-context.py') observed
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+if (-not $Namespace) {
+    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+    $Namespace = & $python (Join-Path $PSScriptRoot 'cluster-context.py') namespace
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+$demoContext = $Context
 . (Join-Path $PSScriptRoot 'common.ps1')
+$script:Context = $demoContext
 
 try {
-    $existing = Invoke-KubectlResult -Arguments @('-n','kubeai','get','pod','kubeai-demo-incident','-o','json')
+    $existing = Invoke-KubectlResult -Arguments @('-n',$Namespace,'get','pod','kubeai-demo-incident','-o','json')
     if ($existing.ExitCode -eq 0) {
         $pod = ($existing.StdOut -join "`n") | ConvertFrom-Json
         if ($pod.status.phase -eq 'Running') {
@@ -14,16 +26,16 @@ try {
         }
         # Seul le pod de démonstration est remplacé ; les PVC de monitoring
         # conservent les observations déjà ingérées.
-        Invoke-Kubectl -Arguments @('-n','kubeai','delete','pod','kubeai-demo-incident','--wait=true') | Out-Null
+        Invoke-Kubectl -Arguments @('-n',$Namespace,'delete','pod','kubeai-demo-incident','--wait=true') | Out-Null
     } elseif ($existing.ExitCode -ne 1) {
         $detail = if ($existing.StdErr.Count) { $existing.StdErr -join ' ' } else { "code $($existing.ExitCode)" }
         throw "Impossible de vérifier le pod de démonstration : $detail"
     }
 
-    Invoke-Kubectl -Arguments @('apply','-k',(Join-Path $script:ProjectRoot 'k8s\demo\incident')) | Out-Null
-    Invoke-Kubectl -Arguments @('-n','kubeai','wait','--for=condition=Ready','pod/kubeai-demo-incident','--timeout=180s') | Out-Null
+    Invoke-Kubectl -Arguments @('-n',$Namespace,'apply','-k',(Join-Path $script:ProjectRoot 'k8s\demo\incident')) | Out-Null
+    Invoke-Kubectl -Arguments @('-n',$Namespace,'wait','--for=condition=Ready','pod/kubeai-demo-incident','--timeout=180s') | Out-Null
     Write-Host 'Scénario en cours ; les marqueurs ci-dessous sont horodatés en UTC.'
-    $logs = Invoke-Kubectl -Arguments @('-n','kubeai','logs','--follow','pod/kubeai-demo-incident')
+    $logs = Invoke-Kubectl -Arguments @('--request-timeout=0','-n',$Namespace,'logs','--follow','pod/kubeai-demo-incident')
     $logs | ForEach-Object { Write-Host $_ }
     if (-not ($logs -match 'phase=complete')) {
         throw "Le scénario ne s’est pas terminé normalement ; aucun succès de démonstration n’est annoncé."

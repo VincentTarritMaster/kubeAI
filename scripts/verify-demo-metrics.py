@@ -12,27 +12,40 @@ processus existent, et que les marqueurs du scénario sont présents.
 
 import argparse
 import json
+import importlib.util
 import math
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--context", default="docker-desktop")
-    parser.add_argument("--namespace", default="kubeai")
+    parser.add_argument("--context", help="Ancien mode : un seul contexte pour les pods et le stockage")
+    parser.add_argument("--supervision-context")
+    parser.add_argument("--observed-context")
+    parser.add_argument("--monitoring-namespace")
+    parser.add_argument("--namespace")
     parser.add_argument("--pod", default="kubeai-demo-incident")
     parser.add_argument("--timeout", type=int, default=60, help="Attente des scrapes en secondes")
     args = parser.parse_args()
+    spec = importlib.util.spec_from_file_location("contexts", Path(__file__).with_name("cluster-context.py"))
+    contexts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(contexts)
+    args.supervision_context = args.supervision_context or args.context or contexts.context("supervision")
+    args.observed_context = args.observed_context or args.context or contexts.context("observed")
+    args.monitoring_namespace = args.monitoring_namespace or ("monitoring" if args.context else "supervision")
+    args.namespace = args.namespace or ("kubeai" if args.context else contexts.context("namespace"))
+    cluster_selector = "" if args.context else ",cluster=" + json.dumps(args.observed_context)
     if args.timeout <= 0:
         parser.error("--timeout doit être positif")
 
-    def kubectl(*command):
+    def kubectl(*command, context=None):
         result = subprocess.run(
-            ["kubectl", "--context", args.context, "--request-timeout=15s", *command],
+            ["kubectl", "--context", context or args.supervision_context, "--request-timeout=15s", *command],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode:
@@ -41,7 +54,7 @@ def main():
 
     def raw(service, port, path, params):
         route = (
-            f"/api/v1/namespaces/monitoring/services/http:{service}:{port}"
+            f"/api/v1/namespaces/{args.monitoring_namespace}/services/http:{service}:{port}"
             f"/proxy/{path}?{urlencode(params)}"
         )
         response = json.loads(kubectl("get", "--raw", route))
@@ -61,7 +74,7 @@ def main():
         now = time.time_ns()
         body = raw("loki", 3100, "loki/api/v1/query_range", {
             "query": ('{namespace="' + args.namespace + '",pod="' + args.pod
-                      + '"} |= "KUBEAI_DEMO_INCIDENT"'),
+                      + '"' + cluster_selector + '} |= "KUBEAI_DEMO_INCIDENT"'),
             "start": str(now - 3600 * 10**9), "end": str(now),
             "limit": "50", "direction": "backward",
         })
@@ -77,7 +90,7 @@ def main():
         return found
 
     try:
-        pod = json.loads(kubectl("-n", args.namespace, "get", "pod", args.pod, "-o", "json"))
+        pod = json.loads(kubectl("-n", args.namespace, "get", "pod", args.pod, "-o", "json", context=args.observed_context))
     except (RuntimeError, json.JSONDecodeError) as error:
         print(f"ÉCHEC : pod {args.namespace}/{args.pod} introuvable ({error}). "
               "Lancez d'abord scripts/run-demo-incident.ps1.", file=sys.stderr)
@@ -88,7 +101,7 @@ def main():
         print(f"ÉCHEC : le pod est en phase {phase}, pas Running/Succeeded.", file=sys.stderr)
         return 1
 
-    labels = f'namespace="{args.namespace}",pod="{args.pod}"'
+    labels = f'namespace="{args.namespace}",pod="{args.pod}"' + cluster_selector
     deadline = time.monotonic() + args.timeout
     last_error = ""
     while True:
@@ -114,9 +127,12 @@ def main():
                 raise RuntimeError("aucun 5xx historiquement observé pour un scénario terminé")
             if not phases:
                 raise RuntimeError("aucun marqueur KUBEAI_DEMO_INCIDENT dans Loki")
+            if phase == "Succeeded" and not {"normal", "anomaly_start", "recovered", "complete"}.issubset(phases):
+                raise RuntimeError("les quatre marqueurs du scénario terminé ne sont pas encore présents dans Loki")
             report = {
                 "status": "success",
-                "context": args.context,
+                "observed_context": args.observed_context,
+                "supervision_context": args.supervision_context,
                 "namespace": args.namespace,
                 "pod": args.pod,
                 "phase": phase,

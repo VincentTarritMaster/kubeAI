@@ -4,13 +4,12 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import re
-import unicodedata
 from zoneinfo import ZoneInfo
 
 from app.clients.base import UpstreamError
 from app.clients.loki_client import HistoricalLogs
 from app.clients.prometheus_client import HistoricalMetrics, HistoricalPoint
-from app.conversation import dialogue, explicit_intent
+from app.conversation import dialogue, explicit_intent, latest_incident_request, plain as _plain
 from app.services.privacy import redact_data, redact_text
 from app.services.presentation import (DEFAULT_ZONE, date_label, day_heading, local_time,
                                        missing_summary, offset_label, short_time, technical_details)
@@ -32,10 +31,6 @@ def is_incident_text(question):
 def _arg(question, name):
     found = re.search(r"(?<![\w-])" + name + r"\s*=\s*([^\s,;]+)", question, re.IGNORECASE)
     return found.group(1).rstrip(".?!)»\"'") if found else None
-
-
-def _plain(value):
-    return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
 
 
 _MONTHS = {"janvier": 1, "jan": 1, "january": 1, "fevrier": 2, "fev": 2,
@@ -173,7 +168,7 @@ def _components(question):
         pod = match.group(1) if match and match.group(1) not in {"a-t-il", "est", "precedent", "concerne", "concernes", "et", "suivant", "dans", "du", "de", "le", "les"} else None
     if not pod:
         match = re.search(r"\bincident\s+([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)\b", plain)
-        if match and match.group(1) not in {"precedent", "precedente", "actuel", "passe", "suivant", "du", "de", "le", "debut", "fin", "cree", "creee", "dernier"}:
+        if match and match.group(1) not in {"precedent", "precedente", "actuel", "passe", "suivant", "du", "de", "le", "debut", "fin", "cree", "creee", "dernier", "avec", "sans", "pour", "sur", "plus", "recent", "recente"}:
             pod = match.group(1)
     qualified = re.search(r"\b([a-z0-9][a-z0-9-]{0,62})/([a-z0-9][a-z0-9-]{0,252})\b", plain)
     filler = {"concernes", "concerne", "et", "les", "le", "du", "de", "dans", "pour", "avec"}
@@ -530,6 +525,8 @@ def render(report, ai_note, *, zone=DEFAULT_ZONE):
               "aucun marqueur de début d'anomalie établi dans les données retenues."),
              "Les marqueurs décrivent le déroulement observé ; ils ne prouvent pas une cause racine.", "",
              "## Chronologie de l'incident", ""]
+    if report.get("discovery_note"):
+        lines[4:4] = ["**Recherche automatique :** " + report["discovery_note"], ""]
     previous_day = None
     anomaly_number = 0
     normal_number = 0
@@ -671,10 +668,13 @@ async def resolve_request(service, chat):
             return {"start": datetime.fromtimestamp(start_ns / 10**9, timezone.utc),
                     "end": datetime.fromtimestamp(end_ns / 10**9, timezone.utc),
                     "start_ns": start_ns, "end_ns": end_ns,
-                    "timezone": "UTC", "namespace": "kubeai", "pod": "kubeai-demo-incident",
+                    "timezone": "UTC", "namespace": service.loki.settings.namespace, "pod": "kubeai-demo-incident",
                     "search_note": "Fenêtre issue des quatre marqueurs KUBEAI_DEMO_INCIDENT réels dans Loki : "
                                    + ", ".join(f"{item['phase']}={item['timestamp_ns']} ns UTC"
                                                for item in episode["markers"][:4])}, None, None
+        if latest_incident_request(question):
+            from app.services.latest_incident import discover
+            return await discover(service, parts, _historical_log_signal, dialogue(chat))
         if parts.get("instant"):
             return None, "Horodatage compris. Quelle date et heure de fin délimitent l'incident ?", None
         return None, HELP, None
@@ -736,6 +736,8 @@ def _historical_log_signal(message):
             return 0
         if value in {"anomaly_start", "anomaly", "degraded", "failed", "failure", "error"}:
             return 4
+    message = re.sub(r"\b(?:no|without|aucune?|sans)\s+(?:(?:recent|observed|known)\s+)?(?:errors?|exceptions?|failures?|anomal\w*)\b", "", message, flags=re.I)
+    message = re.sub(r"\berrors?\s*[:=]\s*0\b", "", message, flags=re.I)
     if re.search(r"\b(?:error|exception|failed|timeout|oomkilled|outofmemory|crash|refused|panic)\b|\banomal", message, re.I):
         return 2
     return 0
@@ -904,6 +906,8 @@ async def investigate(service, chat):
     report, _, _, _ = scanned or await collect(service, window, include_correlation=True)
     if window.get("search_note"):
         report["warnings"].append(window["search_note"])
+        if window.get("automatic_discovery"):
+            report["discovery_note"] = window["search_note"]
     provider_name = service.llm.provider_name
     sensitive_values = service.sensitive_values()
     local_provider = service.llm.settings.llm_provider == "local"

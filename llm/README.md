@@ -58,39 +58,46 @@ Depuis la racine du dépôt :
 ```bash
 python3 scripts/local-llm.py setup
 python3 scripts/local-llm.py start
-python3 scripts/configure-local-llm.py --context minikube
 ```
 
-Ces commandes, lancées séparément par une personne sur un Mac adapté,
-téléchargent/vérifient les poids, démarrent le moteur et transfèrent la clé
-locale vers le Secret Kubernetes `kubeai-llm`. La première commande télécharge
-environ 5 Go. `start.sh` ne les exécute jamais automatiquement. Pour sélectionner
-ce profil dans le backend, renseigner explicitement dans sa configuration
-`LLM_PROVIDER=local`, `LLM_BASE_URL=http://host.minikube.internal:11435/v1`,
-`LLM_MODEL=apertus-8b`, `LLM_API_KEY_FILE=/var/run/secrets/kubeai-llm/api-key`
-et `LLM_TIMEOUT_SECONDS=180`. Le serveur local existant requiert une clé dans
-ce profil ; le fichier Secret reste facultatif pour les endpoints locaux sans
-authentification. Dans Kubernetes, adapter le ConfigMap et redémarrer le
-Deployment avant d'essayer le chat.
+Ces commandes téléchargent/vérifient les poids, démarrent le moteur et transfèrent
+la clé locale vers le Secret Kubernetes `kubeai-llm`. La première commande
+télécharge environ 5 Go. `start.sh` ne télécharge et ne lance pas le modèle.
+
+Dans le `.env` à la racine, configurer :
+
+```dotenv
+LLM_PROVIDER=local
+LLM_BASE_URL=http://127.0.0.1:11435/v1
+LLM_MODEL=apertus-8b
+LLM_API_KEY_FILE=.cache/apertus/api-key
+LLM_TIMEOUT_SECONDS=180
+```
+
+Le serveur Apertus requiert cette clé. Ouvrir Docker Desktop puis lancer :
 
 Pour déployer après cette préparation explicite :
 
 ```bash
-./start.sh
+bash start.sh
 ```
 
-Si les fichiers du modèle ne sont pas installés, `start.sh` déploie quand même
-l'inventaire et le monitoring. Le démarrage de l'agent ne dépend pas du LLM.
+Le lanceur valide le `.env`, crée ou démarre les deux clusters Minikube,
+construit l'agent et déploie les collecteurs et les services dans leurs clusters
+respectifs. Voir le [graphique de la topologie](../docs/two-clusters.md).
+Il transfère automatiquement la clé du moteur dans le cluster de supervision.
+L'adresse `127.0.0.1` devient `host.docker.internal` pour les pods et le chemin
+de clé devient `/var/run/secrets/kubeai-llm/api-key`.
 
 ## Utiliser le chat
 
 ```bash
-kubectl --context minikube port-forward -n kubeai service/open-webui 8080:80
+# Le tunnel vers Open WebUI est ouvert automatiquement par bash start.sh
 ```
 
 Ouvrir <http://127.0.0.1:8080>, choisir **kubeai** puis poser :
 
-> Quel est l'état du namespace kubeai ? Quels pods ont un problème ?
+> Quel est l'état du namespace applications ? Quels pods ont un problème ?
 
 Ou :
 
@@ -127,14 +134,14 @@ avec une clé aléatoire obligatoire pour les appels d'inférence. La clé est d
 `.cache/apertus/api-key` (permissions 600) et dans le Secret `kubeai-llm`. Elle n'est
 jamais incluse dans Git, les arguments du processus ou l'interface Open WebUI.
 Le endpoint natif `/health` est public, conformément au fonctionnement de llama.cpp.
-Les pods joignent le Mac via `host.minikube.internal`, vérifié sur Minikube/Docker Desktop.
+Les pods joignent le Mac via `host.docker.internal`, vérifié sur Minikube/Docker Desktop.
 
 ## Tester sans navigateur
 
 Avec un tunnel vers l'agent :
 
 ```bash
-kubectl --context minikube port-forward -n kubeai service/kubeai-agent 8000:8000
+kubectl --context kubeai-supervision port-forward -n kubeai service/kubeai-agent 8000:8000
 ```
 
 Dans un autre terminal :
@@ -153,7 +160,7 @@ curl http://127.0.0.1:8000/diagnose \
 Tests reproductibles du moteur réel, sans navigateur :
 
 ```bash
-KUBEAI_LIVE_TEST_CONTEXT=minikube python3 agent/tests/integration/test_live_chat.py
+KUBEAI_LIVE_TEST_CONTEXT=kubeai-supervision python3 agent/tests/integration/test_live_chat.py
 ```
 
 Le 18 octobre 2026, les tests ont validé un diagnostic sur les pods réels et le
@@ -163,7 +170,7 @@ L'interface n'a pas été contrôlée visuellement, l'accès navigateur ayant é
 
 ## Périmètre et limites
 
-Le namespace surveillé est `kubeai`. Le contexte envoyé comprend jusqu'à 20 pods,
+Le namespace surveillé est `applications` par défaut, configurable via `KUBERNETES_NAMESPACE`. Le contexte envoyé comprend jusqu'à 20 pods,
 incidents en priorité, et 12 lignes de logs des dix dernières minutes, issues
 d'au plus six pods. Les lignes sont limitées à 400 caractères. Ces extraits ne
 constituent pas une recherche exhaustive ou une chronologie complète.

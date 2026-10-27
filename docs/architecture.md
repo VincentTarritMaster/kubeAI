@@ -1,5 +1,14 @@
 # Architecture actuelle
 
+Le démarrage courant utilise désormais deux clusters séparés :
+`kubeai-observed` (namespaces `applications` et `collecte`) et
+`kubeai-supervision` (namespaces `kubeai` et `supervision`).
+Le [graphique cluster → namespace → pod → conteneur](two-clusters.md)
+et les trois commandes de lancement y sont documentés. Le chat courant utilise
+[un agent qui choisit ses fonctions avec le modèle](agent-tools.md), puis rédige
+une réponse dans la langue de la question. Les sections suivantes
+décrivent la validation historique du 22 octobre et ses anciens modes.
+
 Cette page décrit l’architecture **réellement déployée et validée** au
 22 octobre 2026. Le document de conception initial est archivé :
 [`archive/Group-17-Architecture-initiale.pdf`](archive/Group-17-Architecture-initiale.pdf).

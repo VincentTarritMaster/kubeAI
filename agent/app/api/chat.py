@@ -1,19 +1,24 @@
 """OpenAI-compatible chat surface for Open WebUI and namespace diagnosis."""
 import json
+import asyncio
 import time
 import uuid
+import logging
+import traceback
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import httpx
 
-from app.models import ChatMessage, ChatRequest, DiagnosisRequest
+from app.models import AgentChatRequest, ChatMessage, ChatRequest, DiagnosisRequest
 from app.api.auth import require_api_key
 from app.services.diagnosis import CHAT_MODEL, source_note
 from app.services.source_notes import SourceNoteFilter, filter_source_notes
 from app.services.health_answer import health_answer
 from app.conversation import OUT_OF_SCOPE, dialogue
 from app.services.privacy import redact_text
+from app.services.tool_agent import ToolAgent
+from app.clients.base import UpstreamError
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 LEGACY_MODEL = "kubeai-apertus"
@@ -47,6 +52,9 @@ def completion(content, model=CHAT_MODEL):
 
 
 async def finish_nonstream(service, chat):
+    if service.llm.settings.chat_mode == "agent":
+        text, observation = await ToolAgent(service).run(chat)
+        return completion(text, chat.model), observation
     route = diagnostic_route(chat)
     if route == "out_of_scope":
         return completion(OUT_OF_SCOPE, chat.model), {"scope": "out_of_scope", "status": "unsupported_question"}
@@ -81,7 +89,8 @@ async def finish_nonstream(service, chat):
 
 @router.post("/diagnose", tags=["diagnosis"], operation_id="diagnose_namespace")
 async def diagnose(body: DiagnosisRequest, request: Request):
-    chat = ChatRequest(messages=[ChatMessage(role="user", content=body.question)])
+    schema = AgentChatRequest if request.app.state.settings.chat_mode == "agent" else ChatRequest
+    chat = schema(messages=[ChatMessage(role="user", content=body.question)])
     answer, observation = await finish_nonstream(request.app.state.diagnosis, chat)
     return {"model": CHAT_MODEL, "answer": answer["choices"][0]["message"]["content"],
             "observation": observation, "usage": answer.get("usage")}
@@ -130,14 +139,51 @@ def _stream_response(events):
 
 
 @router.post("/v1/chat/completions", tags=["chat"], operation_id="chat_with_cluster")
-async def chat_completions(body: ChatRequest, request: Request):
+async def chat_completions(body: AgentChatRequest, request: Request):
     """OpenAI-compatible text endpoint for Open WebUI, including SSE streaming."""
     if body.model not in {CHAT_MODEL, LEGACY_MODEL}:
         raise HTTPException(404, detail="Modèle inconnu : sélectionnez kubeai")
     service = request.app.state.diagnosis
+    if service.llm.settings.chat_mode == "legacy":
+        body = ChatRequest.model_validate(await request.json())
     if not body.stream:
         answer, _ = await finish_nonstream(service, body)
         return answer
+
+    if service.llm.settings.chat_mode == "agent":
+        common = {"id": "chatcmpl-" + uuid.uuid4().hex, "object": "chat.completion.chunk",
+                  "created": int(time.time()), "model": body.model}
+
+        async def agent_events():
+            task = asyncio.create_task(ToolAgent(service).run(body))
+            try:
+                yield _event(common, role="assistant")
+                while not task.done():
+                    await asyncio.wait({task}, timeout=10)
+                    if not task.done():
+                        yield ": working\n\n"
+                text, _ = await task
+                for part in text.splitlines(keepends=True):
+                    yield _event(common, content=part)
+                yield _event(common, finish_reason="stop")
+                yield "data: [DONE]\n\n"
+            except UpstreamError as error:
+                yield _error_event(error.message)
+                yield "data: [DONE]\n\n"
+            except Exception:
+                # SSE has already started, so the normal HTTP exception logger
+                # cannot report the failure. Keep diagnostics server-side and
+                # redact credentials before logging the traceback.
+                details = redact_text(traceback.format_exc(), (*service.sensitive_values(), service.llm.settings.api_key))
+                logging.getLogger("uvicorn.error").error("Agent streaming failed:\n%s", details)
+                yield _error_event("The analysis was interrupted by an internal error.")
+                yield "data: [DONE]\n\n"
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        return _stream_response(agent_events())
 
     route = diagnostic_route(body)
     if route != "chat":

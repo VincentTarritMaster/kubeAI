@@ -1,10 +1,10 @@
 # Agent kubeAI
 
 Ce dossier contient le backend Python de kubeAI : une API **FastAPI** en lecture
-seule, avec une chaîne **LangChain Core** pour la priorisation LLM. La version
-actuelle fournit l'état des pods, leurs mesures CPU/mémoire via cAdvisor,
-récupère des logs dans Loki et utilise Mistral API pour répondre aux questions.
-Apertus reste facultatif.
+seule, avec des fonctions typées **LangChain Core** que le modèle choisit à
+partir de la conversation. Le modèle appelle Kubernetes, Mimir et Loki via ces
+fonctions, puis rédige sa réponse dans la langue de la question. Mistral et
+Apertus local sont configurables. Voir [les outils de l'agent](../docs/agent-tools.md).
 
 | Fichier / dossier | Rôle |
 |---|---|
@@ -18,7 +18,9 @@ Apertus reste facultatif.
 | `app/services/cluster_status.py` | Assembler l'état du namespace et l'inventaire du cluster |
 | `app/services/global_health.py` | Évaluer et présenter la santé globale avec des règles déterministes |
 | `app/services/diagnosis.py` | Produire le diagnostic |
-| `app/services/llm_service.py` | Chaîne LangChain de sélection/priorisation et client LLM borné |
+| `app/services/llm_service.py` | Client LLM et validation des appels de fonctions natifs |
+| `app/services/tool_agent.py` | Boucle de décision du modèle, exécution et réponse |
+| `app/services/observability_tools.py` | Outils LangChain, schémas et lectures bornées |
 | `app/services/privacy.py` | Masquer les secrets et identifiants détectables |
 | `app/prompts/` | Instructions du modèle |
 | `tests/test_api.py` | Tests automatisés avec réponses Kubernetes/Mimir simulées |
@@ -37,11 +39,12 @@ Apertus reste facultatif.
 
 Collecte : Alloy → Mimir + Loki → FastAPI.
 
-Utilisateur → Open WebUI → FastAPI → Kubernetes/Mimir/Loki → Mistral API → réponse
+Utilisateur → Open WebUI → modèle → appels de fonctions validés → Kubernetes/Mimir/Loki → modèle → réponse
 
 Open WebUI se connecte aux routes compatibles OpenAI de cet agent. À chaque tour,
-celui-ci prépare une observation Kubernetes/Mimir/Loki, masque les valeurs sensibles
-détectables et appelle Mistral API. Le modèle virtuel exposé est `kubeai` ;
+le modèle reçoit l'historique récent et les descriptions des outils. Il choisit
+les lectures nécessaires, lit leurs résultats puis rédige sa réponse. Les valeurs
+sensibles détectables sont masquées. Le modèle virtuel exposé est `kubeai` ;
 `kubeai-apertus` reste accepté pour les conversations historiques. L'inventaire
 des nœuds, pods de tous les namespaces et événements est exposé séparément sur
 `/cluster/inventory`. Voir [la configuration Mistral](../docs/mistral-api.md) et
@@ -49,13 +52,11 @@ des nœuds, pods de tous les namespaces et événements est exposé séparément
 exercée sur le cluster Docker Desktop du projet ; elle reste à revalider sur une
 autre cible, et les tests simulés ne prouvent pas l'ingestion.
 
-La question « Quel est l'état de santé de mon cluster ? » utilise cet inventaire
-dans le chat Open WebUI et dans `/diagnose`. Les faits et le niveau de santé sont
-calculés avant Mistral ; les métriques Mimir agrégées couvrent les conteneurs de
-pods de tous les namespaces. Le modèle ne
-peut ajouter qu'une priorité de lecture étayée ; sans clé ou en cas d'échec, le
-résumé déterministe reste disponible.
-Les règles et scénarios figurent dans [la démonstration A](../docs/demo-scenarios.md).
+Une question de santé générale peut appeler `get_cluster_inventory`, tandis
+qu'une investigation historique peut combiner recherche d'incident, logs,
+métriques et événements. Aucun mot particulier n'est exigé dans la question.
+Le mode `KUBEAI_CHAT_MODE=legacy` conserve l'ancien parcours déterministe pour
+compatibilité ; les processus démarrent par défaut en mode `agent`.
 
 La configuration de référence scrape cAdvisor via le proxy de l'API Kubernetes.
 Le ServiceAccount Alloy possède `list/watch` sur les nœuds et `get` sur
@@ -125,9 +126,13 @@ Le contrat détaillé et les comportements en cas de panne figurent dans
 
 ## Configuration
 
-Les valeurs déployées sont dans `k8s/agent-configmap.yaml`. Une modification
-de ce ConfigMap nécessite un redémarrage de l'agent ; `./start.sh` s'en charge
-sur Minikube. `.env.example` documente les variables mais n'est pas chargé.
+Les valeurs par défaut déployées sont dans `k8s/agent-configmap.yaml`.
+`bash start.sh` lit le `.env` racine, crée les deux clusters via
+`scripts/start-two-clusters.py`, applique le fournisseur et les Secrets
+via `scripts/configure-runtime.py`, puis redémarre l'agent. Le kubeconfig cible
+le cluster observé et `OBSERVED_CLUSTER` filtre les lectures Mimir/Loki.
+Voir le [graphique de la topologie](../docs/two-clusters.md). Le processus Python
+dans Kubernetes ne charge pas lui-même de `.env`. `.env.example` sert de modèle.
 
 | Variable | Défaut |
 |---|---|

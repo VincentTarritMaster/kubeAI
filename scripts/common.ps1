@@ -3,7 +3,11 @@ $ErrorActionPreference = 'Stop'
 $script:ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $script:StateDir = Join-Path $script:ProjectRoot '.cache\windows-start'
 $script:Context = 'docker-desktop'
-$script:Kubeconfig = Join-Path $env:USERPROFILE '.kube\kubeai-readonly.yaml'
+$profileDirectory = $env:USERPROFILE
+if ([string]::IsNullOrWhiteSpace($profileDirectory)) {
+    $profileDirectory = [Environment]::GetFolderPath('UserProfile')
+}
+$script:Kubeconfig = Join-Path $profileDirectory '.kube/kubeai-readonly.yaml'
 
 function Assert-Command([string]$Name, [string]$Help) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) { throw "$Name est introuvable. $Help" }

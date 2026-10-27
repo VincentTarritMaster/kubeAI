@@ -58,6 +58,11 @@ class PrometheusClient:
         self.http = http
         self.settings = settings
 
+    def _selector(self, labels: str = "") -> str:
+        if self.settings.observed_cluster:
+            return labels + ("," if labels else "") + "cluster=" + json.dumps(self.settings.observed_cluster)
+        return labels
+
     async def _query(self, query: str, timestamp: float):
         # Chemin relatif : conserver le préfixe Mimir déjà présent dans la base URL.
         body = await get_json(self.http, "mimir", "api/v1/query", params={
@@ -94,7 +99,7 @@ class PrometheusClient:
         if job not in {"kube-state-metrics", "kubernetes-cadvisor", "kubernetes-pods-annotated"}:
             raise ValueError("Unsupported scrape job")
         try:
-            samples, _ = await self._query(f"min(up{{job={json.dumps(job)}}})", timestamp)
+            samples, _ = await self._query("min(up{" + self._selector("job=" + json.dumps(job)) + "})", timestamp)
         except UpstreamError:
             return "unknown"
         if not samples:
@@ -106,13 +111,14 @@ class PrometheusClient:
         if metric != "http_requests_total":
             raise ValueError("Unsupported metric")
         try:
-            samples, _ = await self._query(f"count(last_over_time({metric}[1h]))", timestamp)
+            selector = "{" + self._selector() + "}" if self.settings.observed_cluster else ""
+            samples, _ = await self._query(f"count(last_over_time({metric}{selector}[1h]))", timestamp)
         except UpstreamError:
             return False
         return bool(samples and samples[0].value > 0)
 
     async def snapshot(self, timestamp: float):
-        selector = f'job="kubernetes-cadvisor",namespace={json.dumps(self.settings.namespace)},container!="",container!="POD"'
+        selector = self._selector(f'job="kubernetes-cadvisor",namespace={json.dumps(self.settings.namespace)},container!="",container!="POD"')
         cpu = f"container_cpu_usage_seconds_total{{{selector}}}"
         memory = f"container_memory_working_set_bytes{{{selector}}}"
         age = self.settings.metrics_max_age
@@ -133,7 +139,7 @@ class PrometheusClient:
 
     async def cluster_usage(self, timestamp: float) -> ClusterUsage:
         """Observed pod-container usage across namespaces, not node capacity."""
-        selector = 'job="kubernetes-cadvisor",namespace!="",pod!="",container!="",container!="POD"'
+        selector = self._selector('job="kubernetes-cadvisor",namespace!="",pod!="",container!="",container!="POD"')
         cpu = f"container_cpu_usage_seconds_total{{{selector}}}"
         memory = f"container_memory_working_set_bytes{{{selector}}}"
         age = self.settings.metrics_max_age
@@ -162,7 +168,7 @@ class PrometheusClient:
         selector = ['job="kubernetes-cadvisor"', 'container!=""', 'container!="POD"']
         selector.append('namespace=' + json.dumps(namespace) if namespace else 'namespace!=""')
         selector.append('pod=' + json.dumps(pod) if pod else 'pod!=""')
-        labels = ",".join(selector)
+        labels = self._selector(",".join(selector))
         cpu = f'container_cpu_usage_seconds_total{{{labels}}}'
         memory = f'container_memory_working_set_bytes{{{labels}}}'
         queries = {
@@ -171,7 +177,7 @@ class PrometheusClient:
         }
         if include_correlation:
             target = [f'namespace={json.dumps(namespace)}', f'pod={json.dumps(pod)}']
-            target_selector = ",".join(target)
+            target_selector = self._selector(",".join(target))
             queries.update({
                 # Application process CPU is distinct from container CPU usage.
                 "app_cpu_cores": f'sum by (namespace,pod) (rate(process_cpu_seconds_total{{{target_selector}}}[1m]))',
@@ -265,7 +271,7 @@ class PrometheusClient:
         if (not namespace or len(namespace) > 63 or not re.fullmatch(valid, namespace)
                 or not pod or len(pod) > 253 or not re.fullmatch(valid, pod)):
             raise ValueError("Invalid resource for incident signal query")
-        selector = f'namespace={json.dumps(namespace)},pod={json.dumps(pod)}'
+        selector = self._selector(f'namespace={json.dumps(namespace)},pod={json.dumps(pod)}')
         query = f"sum by (namespace,pod) (rate(process_cpu_seconds_total{{{selector}}}[1m]))"
         try:
             body = await get_json(self.http, "mimir", "api/v1/query_range", params={

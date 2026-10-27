@@ -1,5 +1,9 @@
 # Installation Windows / Docker Desktop
 
+Le démarrage actuel est `./start.ps1` : il prépare deux profils Minikube, avec
+FastAPI dans le cluster de supervision. Voir le [guide des deux clusters](two-clusters.md).
+Le contenu ci-dessous décrit l'ancien mode FastAPI sur Windows.
+
 Ce guide décrit le mode **FastAPI sur Windows, Open WebUI dans Kubernetes**.
 Les manifests existants conservent le mode entièrement déployé dans le cluster.
 Lancez les commandes depuis la racine du dépôt dans PowerShell 5.1 ou 7.

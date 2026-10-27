@@ -27,6 +27,20 @@ de santé globale.
 
 ## B — Investigation historique et chronologie
 
+La demande **« Analyse le dernier incident »** sélectionne automatiquement un
+pod et une période dans le namespace observé. L'agent compare les derniers
+logs d'anomalie Loki (30 jours de rétention, au plus 200 logs candidats), les
+avertissements Kubernetes de pods encore disponibles et le dernier cycle de démo.
+Un pod supprimé peut être retrouvé par ses logs. La réponse indique la ressource
+retenue et les limites de cette recherche.
+
+Pour la démo complète, les quatre marqueurs donnent les bornes exactes. Pour un
+autre signal, la fenêtre de recherche couvre deux minutes avant et jusqu'à
+cinq minutes après, sans dépasser l'heure actuelle ; elle ne prouve pas la durée
+réelle de l'incident. Sans signal horodaté, l'agent annonce ce qu'il n'a pas pu
+retrouver. Deux pods au même horodatage demandent une sélection.
+Une date explicite reste prioritaire et n'est pas remplacée par cette recherche.
+
 Après `run-demo-incident.ps1`, la démonstration peut commencer par une question naturelle :
 
 > Analyse l'incident du dernier script de démonstration.
@@ -123,9 +137,28 @@ Pour générer un nouvel incident contrôlé, démarrer KubeAI, puis lancer dans
 PowerShell depuis la racine du dépôt :
 
 ```powershell
-.\scripts\run-demo-incident.ps1
-python scripts\verify-demo-metrics.py --context docker-desktop
+.\start-failure.ps1
+python scripts\verify-demo-metrics.py
 ```
+
+Sur macOS avec Minikube, depuis la racine du dépôt :
+
+```bash
+bash start-failure.sh
+python3 scripts/verify-demo-metrics.py
+```
+
+`start-failure.sh` lance désormais le scénario d'incident, via
+`scripts/run-demo-incident.sh`. Il accepte un autre contexte, par exemple
+`bash start-failure.sh kubeai-observed`, ou le moteur PowerShell lorsqu'il est
+installé : `bash start-failure.sh --shell ps1`.
+Sous Windows, `.\start-failure.ps1` lance `scripts/run-demo-incident.ps1`
+sur le cluster observé de la dernière topologie démarrée ; `-Context` permet de choisir un autre contexte.
+Les scripts de démonstration restent directement utilisables. Le suivi des logs
+n'a pas de délai global de 30 secondes : il reste ouvert pendant le scénario.
+`bash stop-failure.sh` ou `.\stop-failure.ps1` supprime ensuite les pods de démo
+dans le namespace `applications`. Le [graphique des deux clusters](two-clusters.md)
+montre les emplacements des collecteurs, du stockage et de l'agent.
 
 Le second script vérifie `up{job="kubernetes-pods-annotated"}`, les compteurs
 HTTP, l'histogramme de latence, `process_cpu_seconds_total` et les marqueurs

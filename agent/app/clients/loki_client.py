@@ -20,9 +20,56 @@ class LokiClient:
     MAX_LINES = 50
     MAX_RANGE_NS = 6 * 3600 * 10**9
     DEMO_LOOKBACK_NS = 30 * 86400 * 10**9
+    DISCOVERY_LIMIT = 200
     def __init__(self, http: httpx.AsyncClient, settings: Settings):
         self.http = http
         self.settings = settings
+
+    def _cluster_selector(self) -> str:
+        return ",cluster=" + json.dumps(self.settings.observed_cluster) if self.settings.observed_cluster else ""
+
+    async def incident_candidates(self, namespace: str, pod: str | None = None) -> HistoricalLogs:
+        """Read bounded, newest-first anomaly candidates, including deleted pods."""
+        valid = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+        if not re.fullmatch(valid, namespace) or len(namespace) > 63:
+            raise ValueError("Invalid namespace for incident discovery")
+        if pod and (not re.fullmatch(valid, pod) or len(pod) > 253):
+            raise ValueError("Invalid pod for incident discovery")
+        selector = "{namespace=" + json.dumps(namespace)
+        if pod:
+            selector += ",pod=" + json.dumps(pod)
+        selector += self._cluster_selector() + "}"
+        pattern = r"(?i)(anomaly|anomalie|degraded|error|exception|failed|failure|timeout|oomkilled|outofmemory|crash|refused|panic)"
+        end = time.time_ns()
+        body = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
+            "query": selector + " |~ " + json.dumps(pattern),
+            "start": str(end - self.DEMO_LOOKBACK_NS), "end": str(end),
+            "direction": "backward", "limit": str(self.DISCOVERY_LIMIT + 1),
+        })
+        data = body.get("data")
+        if (body.get("status") != "success" or not isinstance(data, dict)
+                or data.get("resultType") != "streams" or not isinstance(data.get("result"), list)):
+            raise UpstreamError("loki", "Invalid incident discovery result")
+        entries, outside = [], 0
+        try:
+            for stream in data["result"]:
+                labels = stream["stream"]
+                name = labels.get("pod", "")
+                if (labels.get("namespace") != namespace or not re.fullmatch(valid, name) or len(name) > 253
+                        or (pod and name != pod) or (self.settings.observed_cluster
+                        and labels.get("cluster") != self.settings.observed_cluster)):
+                    continue
+                for raw_stamp, message in stream["values"]:
+                    moment = int(raw_stamp)
+                    if not end - self.DEMO_LOOKBACK_NS <= moment <= end:
+                        outside += 1
+                    elif isinstance(message, str):
+                        entries.append({"namespace": namespace, "pod": name, "container": labels.get("container"),
+                                        "timestamp_ns": str(moment), "message": message[:400]})
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise UpstreamError("loki", "Invalid incident discovery sample") from error
+        entries.sort(key=lambda item: int(item["timestamp_ns"]), reverse=True)
+        return HistoricalLogs(entries[:self.DISCOVERY_LIMIT], len(entries) > self.DISCOVERY_LIMIT, outside)
 
     async def recent_logs(self, pod_names: list[str]):
         # Limiter le contexte et n'interroger que des noms provenant de Kubernetes.
@@ -31,7 +78,8 @@ class LokiClient:
         import re
         selector = (
             "{namespace=" + json.dumps(self.settings.namespace)
-            + ",pod=~" + json.dumps("|".join(re.escape(name) for name in pod_names[:6])) + "}"
+            + ",pod=~" + json.dumps("|".join(re.escape(name) for name in pod_names[:6]))
+            + self._cluster_selector() + "}"
         )
         now = time.time_ns()
         response = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
@@ -62,7 +110,7 @@ class LokiClient:
         selector = "{namespace=" + json.dumps(namespace)
         if pod:
             selector += ",pod=" + json.dumps(pod)
-        selector += "}"
+        selector += self._cluster_selector() + "}"
         response = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
             # Loki's end is exclusive. Query one nanosecond beyond the user's
             # inclusive bound, then still filter returned samples to end_ns.
@@ -101,12 +149,14 @@ class LokiClient:
         entries.sort(key=lambda item: int(item["timestamp_ns"]))
         return HistoricalLogs(entries[:self.MAX_LINES], truncated, outside_window)
 
-    async def latest_demo_episode(self, namespace: str = "kubeai") -> dict | None:
+    async def latest_demo_episode(self, namespace: str | None = None) -> dict | None:
         """Locate a complete real demo cycle from its Loki markers, newest first."""
+        namespace = namespace or self.settings.namespace
         if namespace != self.settings.namespace:
             raise ValueError("Demo namespace must match the configured read-only namespace")
         end = time.time_ns()
-        selector = "{namespace=" + json.dumps(namespace) + ",pod=\"kubeai-demo-incident\"}"
+        selector = ("{namespace=" + json.dumps(namespace) + ",pod=\"kubeai-demo-incident\""
+                    + self._cluster_selector() + "}")
         body = await get_json(self.http, "loki", "/loki/api/v1/query_range", params={
             "query": selector + ' |= "KUBEAI_DEMO_INCIDENT"',
             "start": str(end - self.DEMO_LOOKBACK_NS), "end": str(end),

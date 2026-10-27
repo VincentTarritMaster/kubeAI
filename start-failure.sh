@@ -1,28 +1,46 @@
 #!/usr/bin/env bash
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
 set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-context="${1:-minikube}"
-namespace="kubeai"
-pod="kubeai-demo-failure"
+context=""
+runner="sh"
+context_set=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --shell)
+      [[ $# -ge 2 ]] || { echo "Valeur attendue après --shell (sh ou ps1)." >&2; exit 2; }
+      runner="$2"; shift 2 ;;
+    --context)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "Valeur attendue après --context." >&2; exit 2; }
+      context="$2"; context_set=true; shift 2 ;;
+    -h|--help)
+      echo "Usage : bash start-failure.sh [contexte] [--shell sh|ps1] [--context contexte]"
+      exit 0 ;;
+    -*) echo "Option inconnue : $1" >&2; exit 2 ;;
+    *)
+      if [[ "$context_set" == true ]]; then
+        echo "Un seul contexte Kubernetes est accepté." >&2; exit 2
+      fi
+      context="$1"; context_set=true; shift ;;
+  esac
+done
 
-existing="$(kubectl --context "$context" get pod "$pod" -n "$namespace" --ignore-not-found \
-  -o jsonpath='{.metadata.name}{"|"}{.metadata.labels.kubeai-demo}')"
-if [[ -n "$existing" && "$existing" != "$pod|manual-failure" ]]; then
-  echo "Refus : $pod existe déjà sans le label de cette démonstration." >&2
-  exit 1
+if [[ -z "$context" ]]; then
+  context="$(python3 "$project_dir/scripts/cluster-context.py" observed)"
 fi
 
-if [[ -z "$existing" ]]; then
-  kubectl --context "$context" create -f "$project_dir/k8s/demo/failure-pod.yaml"
-else
-  echo "Le pod de démonstration existe déjà ; ./stop-failure.sh permet de le supprimer."
-fi
-
-kubectl --context "$context" wait -n "$namespace" "pod/$pod" \
-  --for=jsonpath='{.status.phase}'=Failed --timeout=60s
-kubectl --context "$context" get pod "$pod" -n "$namespace"
-kubectl --context "$context" logs "$pod" -n "$namespace" --timestamps
-echo "Dans Open WebUI, demander : Quels pods ont un problème dans kubeai ?"
-echo "Attendre la collecte des logs par Alloy ; poser la question dans les 10 minutes."
-echo "Pour supprimer le pod : ./stop-failure.sh $context"
+case "$runner" in
+  sh) exec bash "$project_dir/scripts/run-demo-incident.sh" "$context" ;;
+  ps1)
+    if ! command -v pwsh >/dev/null 2>&1; then
+      echo "PowerShell (pwsh) est absent. Sur Mac, utiliser simplement : bash start-failure.sh" >&2
+      exit 1
+    fi
+    exec pwsh -NoProfile -File "$project_dir/scripts/run-demo-incident.ps1" -Context "$context"
+    ;;
+  *) echo "--shell doit être sh ou ps1." >&2; exit 2 ;;
+esac

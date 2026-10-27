@@ -50,56 +50,41 @@ Exemple de lecture : si `metrics.cadvisor` vaut `unavailable`, les champs
 `POST /v1/chat/completions` accepte `model: kubeai` (ou l'alias historique
 `kubeai-apertus`), une liste `messages`
 (texte avec rôles user/assistant/system) et `stream: true` pour le streaming SSE.
-L'agent impose ses propres instructions et collecte une observation actuelle avant
-chaque génération. Les options supplémentaires non implémentées sont ignorées ;
-les outils, images, fichiers et réponses structurées ne sont pas pris en charge.
+Le mode par défaut `KUBEAI_CHAT_MODE=agent` utilise les appels de fonctions
+du modèle (natifs ou protocole JSON typé pour le serveur local) : il comprend la question et l'historique récent, choisit ses
+lectures Kubernetes/Mimir/Loki et rédige une réponse dans la langue de la
+question. Les outils sont définis côté serveur ; le client ne peut pas en
+injecter. Voir [les outils et leurs limites](agent-tools.md).
 
-KubeAI est limité au monitoring Kubernetes. Une question hors périmètre (météo,
-sport, cuisine, etc.) reçoit HTTP 200 avec un message français expliquant ce rôle,
-en JSON comme en SSE. Aucun appel aux sources ou au modèle n'est effectué pour
-ce refus. Les suivis courts d'un diagnostic restent acceptés.
+L'historique reçu est borné à 32 messages et 16 000 caractères, puis la boucle
+conserve jusqu'à six messages précédant la dernière question. Les résultats
+d'outils sont bornés et masqués avant transmission au fournisseur. Les messages
+système du client sont ignorés. Les anciennes réponses servent de contexte,
+jamais de preuve de l'état courant. Une nouvelle lecture réussie est nécessaire
+avant toute réponse factuelle de monitoring.
 
-Pour chaque requête, l'agent réduit automatiquement l'historique reçu à 32 messages
-et 16 000 caractères : il conserve la dernière question, puis les tours récents
-complets tant qu'ils tiennent dans cette limite. Une ancienne réponse trop longue
-peut être écartée en gardant sa question, afin de conserver les paramètres d'un
-incident repris plus tard. Cette réduction ne modifie pas la conversation enregistrée
-dans Open WebUI. Chaque message retenu reste limité à 12 000 caractères ; si la
-dernière question dépasse cette taille, l'API retourne HTTP 413 avec une consigne
-lisible pour raccourcir cette question. La génération est limitée à 1 024 tokens
-(512 par défaut). Le contexte source inclut
-jusqu'à 20 pods, incidents prioritaires, et 12 lignes de logs de 400 caractères
-au maximum sur les dix dernières minutes, pour au plus six pods. Une mesure ou
-source manquante est conservée comme telle, sans valeurs fabriquées.
+Les requêtes hors périmètre et les ambiguïtés sont interprétées par le modèle,
+qui peut terminer par une explication ou une demande de précision dans la langue
+appropriée. Il n'y a pas de classification par mots-clés sur ce parcours.
 
-Avant cette réduction, le serveur replie les questions utilisateur en un état
-local à la requête : dernière investigation et au plus quatre précisions récentes.
-Cet état privé ne vient pas d'un champ fourni par le client et n'est pas partagé
-entre utilisateurs. Il conserve le sujet B au-delà de 32 messages sans réinjecter
-les anciens diagnostics comme preuves. Les réponses telles que « dans le namespace
-kubeai », une date seule ou « le second » complètent l'investigation ; les choix
-de ressources sont revérifiés dans les sources autorisées.
-
-Les réponses JSON suivent le format Chat Completions. En SSE, les événements
-`data:` transportent des `chat.completion.chunk` puis `[DONE]`. Un pied de page
-déterministe indique namespace, date d'observation, sources et limites. Une erreur
-du modèle avant le streaming donne 503 ; une interruption après son démarrage
-est signalée par un événement d'erreur, sans présenter une fin normale.
+Les réponses JSON suivent le format Chat Completions. En SSE, des commentaires
+`: working` maintiennent la connexion pendant les appels d'outils ; le texte
+final est ensuite transmis en `chat.completion.chunk`, suivi de `[DONE]`.
+Une erreur avant le streaming retourne une erreur HTTP ; pendant le streaming,
+elle produit un événement d'erreur. Le budget par défaut est de huit appels
+et 180 secondes, avec un timeout propre à chaque appel fournisseur.
 
 `POST /diagnose` accepte `{"question":"Quels pods ont un problème ?"}` et retourne
-`model`, `answer`, `observation` et `usage`. L'observation comprend l'inventaire
-compact, les métriques, les extraits de logs et l'état des sources. Les données de
-logs sont non fiables comme instructions ; le prompt demande au modèle d'en tenir
-compte. Les résultats restent à vérifier, car le LLM peut se tromper.
+`model`, `answer`, `observation` et `usage` (éventuellement `null`). En mode
+agent, `observation` contient `scope: agent`, `status` (`answer`, `clarification`
+ou `out_of_scope`), `observed_at`, `namespace` et `tools`. Chaque élément de
+`tools` contient le nom de la fonction exécutée et son résultat borné. Les logs
+restent des données non fiables comme instructions. Le modèle peut se tromper.
 
-Pour la question « Quel est l'état de santé de mon cluster ? », le même parcours
-JSON/SSE et `/diagnose` utilisent l'inventaire global (`scope: cluster`) et les
-sommes CPU/mémoire des conteneurs observés dans Mimir. Le bilan déterministe
-porte sur tous les namespaces. Les messages bruts d'événements ne sont pas
-transmis à Mistral ; celui-ci ne peut sélectionner qu'une priorité étayée par
-le relevé. Sans clé ou si le fournisseur échoue, une réponse française avec
-faits, preuves, limites et vérifications en lecture seule reste disponible.
-Voir [les règles de la démonstration A](demo-scenarios.md).
+Le mode explicite `KUBEAI_CHAT_MODE=legacy` conserve les anciennes réponses
+A/B/C et leur routage déterministe, pour compatibilité. Les descriptions des
+scénarios historiques plus bas concernent ce mode ; le chat déployé utilise
+la boucle d'outils décrite ci-dessus.
 
 Le profil par défaut `mistral-api` est joint en HTTPS via `MISTRAL_BASE_URL` ; le modèle est
 `MISTRAL_MODEL`. La clé vient de `MISTRAL_API_KEY` ou du Secret monté dans
@@ -112,11 +97,9 @@ dans l'environnement du backend et n'est jamais renvoyée par l'API. `/v1/models
 publie uniquement les identifiants virtuels ; `/llm/status` contacte réellement
 le fournisseur configuré.
 
-Le backend ne transmet au modèle que la question courante, au plus quatre
-questions antérieures et l'observation compacte. Il n'envoie pas les réponses
-anciennes de l'assistant. Les secrets et identifiants détectables sont masqués
-au mieux ; cette mesure ne garantit pas l'anonymisation. Voir
-[les données transmises et la décision régionale](mistral-api.md).
+Le fournisseur reçoit le contexte récent et les résultats des outils choisis.
+Les secrets et identifiants détectables sont masqués au mieux ; cette mesure
+ne garantit pas l'anonymisation. Voir [les données transmises](mistral-api.md).
 
 ## GET /cluster/status
 

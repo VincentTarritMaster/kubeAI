@@ -26,6 +26,13 @@ def _load_development_dotenv():
 @dataclass(frozen=True)
 class Settings:
     namespace: str = "kubeai"
+    # Preserve explicit legacy integrations; running deployments default to the
+    # tool agent in from_env(), independently of the question's wording.
+    chat_mode: str = "legacy"
+    agent_tool_protocol: str = "auto"
+    agent_max_steps: int = 8
+    agent_timeout: float = 180.0
+    observed_cluster: str = ""
     kubernetes_access_mode: str = "in-cluster"
     kubernetes_url: str = "https://kubernetes.default.svc"
     kubeconfig_file: str = ""
@@ -47,6 +54,12 @@ class Settings:
     api_key: str = field(default="", repr=False)
 
     def __post_init__(self):
+        if self.chat_mode not in {"agent", "legacy"}:
+            raise ValueError("KUBEAI_CHAT_MODE doit être agent ou legacy")
+        if self.agent_tool_protocol not in {"auto", "native", "json"}:
+            raise ValueError("KUBEAI_TOOL_PROTOCOL doit être auto, native ou json")
+        if not 2 <= self.agent_max_steps <= 12 or not 10 <= self.agent_timeout <= 600:
+            raise ValueError("Invalid agent execution limits")
         # Keep previously deployed values working while exposing the two
         # canonical profiles consistently in the API and configuration.
         aliases = {"mistral": "mistral-api", "apertus": "local"}
@@ -63,6 +76,8 @@ class Settings:
                 object.__setattr__(self, "llm_timeout", 180.0)
         if len(self.namespace) > 63 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", self.namespace):
             raise ValueError("KUBERNETES_NAMESPACE doit être un nom de namespace valide")
+        if self.observed_cluster and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", self.observed_cluster):
+            raise ValueError("OBSERVED_CLUSTER doit être un identifiant de cluster valide")
         access_mode = self.kubernetes_access_mode.strip().lower()
         object.__setattr__(self, "kubernetes_access_mode", access_mode)
         if access_mode not in {"in-cluster", "kubeconfig"}:
@@ -106,6 +121,11 @@ class Settings:
             ca_file = ""
         return cls(
             namespace=os.getenv("KUBERNETES_NAMESPACE", cls.namespace),
+            chat_mode=os.getenv("KUBEAI_CHAT_MODE", "agent"),
+            agent_tool_protocol=os.getenv("KUBEAI_TOOL_PROTOCOL", "auto"),
+            agent_max_steps=int(os.getenv("KUBEAI_AGENT_MAX_STEPS", "8")),
+            agent_timeout=float(os.getenv("KUBEAI_AGENT_TIMEOUT_SECONDS", "180")),
+            observed_cluster=os.getenv("OBSERVED_CLUSTER", ""),
             kubernetes_access_mode=access_mode,
             kubernetes_url=os.getenv("KUBERNETES_API_URL", cls.kubernetes_url),
             kubeconfig_file=os.getenv("KUBERNETES_KUBECONFIG_FILE", os.getenv("KUBECONFIG", "")),
