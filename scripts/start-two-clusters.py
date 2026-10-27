@@ -33,7 +33,21 @@ def kubectl(context, *args, payload=None, capture=False):
 
 
 def apply(context, objects):
-    kubectl(context, "apply", "-f", "-", payload=json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
+    kubectl(context, "apply", "--validate=false", "-f", "-", payload=json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
+
+
+def wait_api(context, timeout=180):
+    """Attendre l'API après un redémarrage de conteneur Minikube."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["kubectl", "--context", context, "--request-timeout=5s", "get", "--raw=/readyz"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return
+        time.sleep(2)
+    raise ValueError("L'API Kubernetes de " + context + " ne répond pas après " + str(timeout) + " s.")
 
 
 def runtime_module():
@@ -302,6 +316,8 @@ def main():
     detach_private_network(args.observed)
     ensure_cluster(args.supervision, 4096, "10.96.0.0/16", "192.168.79.2")
     ensure_cluster(args.observed, 2048, "10.120.0.0/16", "192.168.79.3")
+    wait_api(args.supervision)
+    wait_api(args.observed)
     run(["minikube", "--profile", args.supervision, "image", "build", "--tag", "kubeai-agent:0.1.0", str(ROOT / "agent")])
     supervision_ip = attach_private_network(args.supervision, "192.168.79.2")
     observed_ip = attach_private_network(args.observed, "192.168.79.3")
