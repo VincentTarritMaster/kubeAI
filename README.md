@@ -105,21 +105,24 @@ est dans [`docs/architecture.md`](docs/architecture.md).
 
 La [validation du 27 octobre 2026](docs/validation-two-clusters-2026-10-27.md)
 confirme le démarrage des deux clusters sur Mac, la collecte distante, les deux
-questions B/C via Apertus et le nettoyage de la démo. Les 417 tests de l'agent
-et les 31 tests des scripts passent. Les résultats suivants décrivent la
-validation historique sur Docker Desktop.
+questions B/C via Apertus et le nettoyage de la démo. Les **417 tests de l'agent**
+et les **20 tests scripts Python** passent ici ; 11 tests shell ne sont pas
+exécutables sous Windows. Les résultats suivants décrivent la validation
+historique sur Docker Desktop.
 
 L'équipe a validé les démonstrations A/B/C depuis Open WebUI sur le cluster
 Docker Desktop : santé globale, chronologie d'incident avec 52 à 80 observations
 historiques Mimir/Loki selon la fenêtre, puis corrélation entre les marqueurs de
 scénario et les métriques CPU/HTTP du pod applicatif. Consultez
 [`docs/demo-scenarios.md`](docs/demo-scenarios.md) pour les questions, preuves,
-limites et étapes de reproduction. Les 360 tests automatisés et les 6 tests
-HTTP loopback passent ; les tests emploient des sources simulées et ne remplacent
-pas une validation du cluster. La page
+limites et étapes de reproduction. Les **417 tests automatisés** passent ; les
+tests emploient des sources simulées et ne remplacent pas une validation du
+cluster. La page
 [`docs/metrics.md`](docs/metrics.md) détaille ce qui est réellement collecté ;
 la validation du 22 octobre est dans
 [`docs/validation-demo-http-2026-10-22.md`](docs/validation-demo-http-2026-10-22.md).
+L'évaluation consolidée, les limites et les objectifs non certifiés sont dans
+[`docs/evaluation.md`](docs/evaluation.md).
 
 ## Sécurité et limites
 

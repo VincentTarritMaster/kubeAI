@@ -146,10 +146,13 @@ Le pod de démonstration expose aussi `http_requests_total` et
 
 ## État de validation
 
-- cAdvisor : `up{job="kubernetes-cadvisor"} = 1` sur Docker Desktop.
-- `/cluster/status` : `data_status: complete`, CPU/mémoire non nuls.
-- A/B/C : validés avec preuves réelles (logs, Mimir, Loki).
-- Tests : 360 tests automatisés + 6 tests HTTP loopback.
-- Détails : [`validation-demo-http-2026-10-22.md`](validation-demo-http-2026-10-22.md),
+- cAdvisor : `up{job="kubernetes-cadvisor"} = 1` sur `kubeai-observed`.
+- `/cluster/status` : `scope=cluster`, `namespace=*`, CPU/mémoire non nuls.
+- A/B/C : validés avec preuves réelles (logs, Mimir, Loki) en français ; B/C
+  rejoués le 28 octobre 2026.
+- Tests : 417 tests agent + 20 tests scripts Python ; tests shell non rejoués
+  sous Windows.
+- Détails : [`evaluation.md`](evaluation.md),
+  [`validation-demo-http-2026-10-22.md`](validation-demo-http-2026-10-22.md),
   [`metrics.md`](metrics.md), [`demo-scenarios.md`](demo-scenarios.md) et
   [`langchain.md`](langchain.md).

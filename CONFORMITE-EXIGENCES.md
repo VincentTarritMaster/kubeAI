@@ -2,7 +2,7 @@
 
 
 
-**Projet P5-G17 — état au 22 octobre 2026**
+**Projet P5-G17 — état au 28 octobre 2026**
 
 
 
@@ -12,7 +12,7 @@
 |-|-|-|
 |**Déploiement sur infrastructure Cloud**|Non requis|Le projet est validé localement sur deux clusters ; le cloud n’est pas exigé par l’équipe|
 |Cluster Kubernetes|✅ Local, deux clusters|—|
-|Deux clusters séparés|✅ Supervisé + supervisé|—|
+|Deux clusters séparés|✅ Cluster observé + supervision|—|
 |Tous les namespaces|✅ Alloy, RBAC, Loki, statut|—|
 |Stack Prometheus/Mimir + Loki|✅ Mimir + Loki + Alloy|—|
 |Collecte/requêtes métriques|✅ KSM + cAdvisor + PromQL|—|
@@ -22,8 +22,10 @@
 |Choix d’un LLM|✅ Mistral API, Apertus optionnel|—|
 |Open WebUI|✅ Modèle `kubeai`, auth|—|
 |**Orchestration des outils / réponses structurées**|✅ Tool agent LangChain|Le modèle choisit les outils et arguments ; garde-fou de preuves à maintenir|
-|**Trois démonstrations A/B/C**|✅ Validées FR/EN, preuves réelles|Captures d’écran + rapport|
-|**Évaluation exactitude / fiabilité / sécurité / limites**|⚠️ Partielle|Les validations existent, mais pas de document consolidé `docs/evaluation.md`|
+|**Trois démonstrations A/B/C**|✅ FR validé ; EN partiel|Captures FR/EN + rapport|
+|**Évaluation exactitude / fiabilité / sécurité / limites**|⚠️ Documentée, objectifs non certifiés|Voir `docs/evaluation.md` ; 90 % et < 60 s à mesurer|
+|Journal d’audit + quotas|⚠️ Absent|À implémenter ou documenter comme limite locale|
+|Tests automatisés|✅ 417 agent + 20 scripts|Tests shell non rejoués sous Windows|
 |Lecture seule|✅ RBAC + aucune remédiation|—|
 |Application de test|✅ Pod synthétique|—|
 |Scénarios reproductibles|✅ Scripts + docs|—|
