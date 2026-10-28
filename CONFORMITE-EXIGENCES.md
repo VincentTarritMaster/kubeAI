@@ -22,8 +22,8 @@
 |Choix d’un LLM|✅ Mistral API, Apertus optionnel|—|
 |Open WebUI|✅ Modèle `kubeai`, auth|—|
 |**Orchestration des outils / réponses structurées**|✅ Tool agent LangChain|Le modèle choisit les outils et arguments ; garde-fou de preuves à maintenir|
-|**Trois démonstrations A/B/C**|✅ FR validé ; EN partiel|Captures FR/EN + rapport|
-|**Évaluation exactitude / fiabilité / sécurité / limites**|⚠️ Documentée, objectifs non certifiés|Voir `docs/evaluation.md` ; 90 % et < 60 s à mesurer|
+|**Trois démonstrations A/B/C**|✅ Benchmark FR/EN contrôlé|Captures FR/EN + rapport ; équivalence sémantique stricte non garantie|
+|**Évaluation exactitude / fiabilité / sécurité / limites**|✅ 30/30 faits, max 15,76 s|Benchmark contrôlé, non représentatif d’une population|
 |Journal d’audit + quotas|✅ Audit JSON + quota par clé|Limite en mémoire, une réplique|
 |Tests automatisés|✅ 420 agent + 20 scripts|Tests shell non rejoués sous Windows|
 |Lecture seule|✅ RBAC + aucune remédiation|—|

@@ -1,0 +1,107 @@
+{
+  "facts_total": 30,
+  "facts_ok": 30,
+  "accuracy": 1.0,
+  "accuracy_target_90_percent": true,
+  "latency_average_seconds": 7.97,
+  "latency_max_seconds": 15.76,
+  "all_under_60s": true,
+  "cases": [
+    {
+      "id": "A-fr",
+      "language": "fr",
+      "elapsed_seconds": 6.02,
+      "under_60s": true,
+      "facts_found": [
+        "kubeai-observed",
+        "1/1",
+        "pods",
+        "redémarrages",
+        "données manquantes"
+      ],
+      "facts_missing": [],
+      "error": null,
+      "answer_chars": 1333
+    },
+    {
+      "id": "A-en",
+      "language": "en",
+      "elapsed_seconds": 3.53,
+      "under_60s": true,
+      "facts_found": [
+        "kubeai-observed",
+        "1/1",
+        "pods",
+        "restart",
+        "missing data"
+      ],
+      "facts_missing": [],
+      "error": null,
+      "answer_chars": 839
+    },
+    {
+      "id": "B-fr",
+      "language": "fr",
+      "elapsed_seconds": 12.33,
+      "under_60s": true,
+      "facts_found": [
+        "08:00:09",
+        "08:01:39",
+        "08:03:09",
+        "08:04:09",
+        "connection refused"
+      ],
+      "facts_missing": [],
+      "error": null,
+      "answer_chars": 1037
+    },
+    {
+      "id": "B-en",
+      "language": "en",
+      "elapsed_seconds": 4.62,
+      "under_60s": true,
+      "facts_found": [
+        "08:00:09",
+        "08:01:39",
+        "08:03:09",
+        "08:04:09",
+        "connection refused"
+      ],
+      "facts_missing": [],
+      "error": null,
+      "answer_chars": 842
+    },
+    {
+      "id": "C-fr",
+      "language": "fr",
+      "elapsed_seconds": 15.76,
+      "under_60s": true,
+      "facts_found": [
+        "CPU",
+        "0.019",
+        "0.088",
+        "HTTP",
+        "p95"
+      ],
+      "facts_missing": [],
+      "error": null,
+      "answer_chars": 1705
+    },
+    {
+      "id": "C-en",
+      "language": "en",
+      "elapsed_seconds": 5.55,
+      "under_60s": true,
+      "facts_found": [
+        "CPU",
+        "0.019",
+        "0.088",
+        "HTTP",
+        "p95"
+      ],
+      "facts_missing": [],
+      "error": null,
+      "answer_chars": 662
+    }
+  ]
+}

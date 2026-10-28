@@ -24,21 +24,13 @@ qui restent réellement à traiter.
 - garde-fou sur les fenêtres UTC explicites ;
 - **audit JSON** et envoi vers Loki (`job="kubeai-audit"`) ;
 - **quota par clé** : 10 requêtes/minute, rafale 5, réponse 429 ;
+- **benchmark FR/EN contrôlé** : 30/30 faits, latence maximale 15.76 s ;
 - **420 tests agent** et **20 tests scripts Python** passent ;
 - document consolidé [`evaluation.md`](evaluation.md).
 
 ## Points restants
 
-### 1. Qualité multilingue et mesure formelle — priorité moyenne
-
-B/C sont validés en français. Il reste à :
-
-- vérifier B/C en anglais sur le même scénario ;
-- documenter l’écart FR/EN observé sur A ;
-- mesurer formellement les objectifs **≥ 90 % de faits corrects** et
-  **< 60 s**, non certifiés aujourd’hui.
-
-### 2. Livrables — priorité haute
+### Livrables — priorité haute
 
 - captures A/B/C en français ;
 - captures A/B/C en anglais ;
@@ -55,13 +47,16 @@ B/C sont validés en français. Il reste à :
 - ❌ Quatrième étudiant / rôle 4 (3 étudiants acceptés).
 - ❌ Orchestration des outils : le tool agent LangChain est intégré.
 - ❌ Audit + quotas : implémentés en mémoire pour la démo locale.
+- ❌ Qualité multilingue / mesure 90 % et < 60 s : benchmark contrôlé réussi.
 
 ## Bilan
 
-Il reste **1 chantier technique** :
+Il ne reste **aucun chantier technique**.
 
-1. qualité multilingue et mesure formelle.
+Il reste **1 chantier de livraison** :
 
-Et **1 chantier de livraison** :
+1. captures, rapport, slides et push final.
 
-2. captures, rapport, slides et push final.
+La réserve à garder dans le rapport : le benchmark est contrôlé (6 cas, 30
+faits) et ne constitue pas une validation statistique sur une population
+représentative.

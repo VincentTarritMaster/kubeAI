@@ -73,8 +73,49 @@ données manquantes sont explicites.
 
 On ne peut pas en déduire un taux général de **90 % de faits corrects** : il
 n'existe pas de jeu de référence indépendant, de questions aléatoires ni de
-double annotation. Le 90 % de la fiche reste donc **un objectif à mesurer**, pas
-un résultat certifié.
+double annotation. Le 90 % de la fiche reste donc **un objectif mesuré sur un
+benchmark contrôlé**, pas un résultat certifié sur une population.
+
+## 2 bis. Benchmark contrôlé FR/EN
+
+Jeu de 6 questions (A/B/C en français et en anglais), 30 faits attendus.
+Exécution réelle contre l'agent le 28 octobre 2026 :
+
+| Cas | Faits trouvés | Latence |
+|---|---|---|
+| A-fr | 5/5 | 6.02 s |
+| A-en | 5/5 | 3.53 s |
+| B-fr | 5/5 | 12.33 s |
+| B-en | 5/5 | 4.62 s |
+| C-fr | 5/5 | 15.76 s |
+| C-en | 5/5 | 5.55 s |
+
+Résultat :
+
+```text
+30/30 faits contrôlés
+exactitude : 100 %
+latence moyenne : 7.97 s
+latence maximale : 15.76 s
+toutes les réponses < 60 s
+```
+
+Le benchmark et ses résultats sont versionnés :
+
+- [`quality-benchmark.json`](quality-benchmark.json) ;
+- [`quality-results.json`](quality-results.json).
+
+Commande de reproduction :
+
+```powershell
+$env:KUBEAI_API_KEY = "<clé>"
+$env:KUBEAI_AGENT_URL = "http://127.0.0.1:8000"
+.\.venv\Scripts\python.exe scripts\evaluate_quality.py
+```
+
+**Limite :** 6 cas contrôlés ne constituent pas un échantillon représentatif.
+Le 90 % et le < 60 s sont démontrés sur ce benchmark, pas sur une population
+aléatoire de questions.
 
 ## 3. Fiabilité
 
@@ -186,14 +227,14 @@ de questions.
 - RBAC read-only ;
 - A/B/C reproductibles ;
 - B/C factuels sur les scénarios contrôlés ;
+- benchmark FR/EN : 30/30 faits, maximum 15.76 s ;
 - audit JSON et quota par clé ;
 - 420 tests agent.
 
 **Points non certifiés :**
 
-- 90 % de faits corrects sur un jeu représentatif ;
-- réponse systématiquement sous 60 secondes ;
+- 90 % de faits corrects sur une population représentative ;
 - équivalence stricte FR/EN.
 
-Ces points doivent être présentés comme des limites ou des travaux restants,
-pas comme des résultats acquis.
+Les objectifs 90 % et < 60 s sont atteints sur le benchmark contrôlé, mais ne
+doivent pas être présentés comme une validation statistique générale.

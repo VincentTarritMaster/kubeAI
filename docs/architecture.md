@@ -148,8 +148,9 @@ Le pod de démonstration expose aussi `http_requests_total` et
 
 - cAdvisor : `up{job="kubernetes-cadvisor"} = 1` sur `kubeai-observed`.
 - `/cluster/status` : `scope=cluster`, `namespace=*`, CPU/mémoire non nuls.
-- A/B/C : validés avec preuves réelles (logs, Mimir, Loki) en français ; B/C
-  rejoués le 28 octobre 2026.
+- A/B/C : validés avec preuves réelles (logs, Mimir, Loki) en français et en
+  anglais sur benchmark contrôlé le 28 octobre 2026.
+- Benchmark FR/EN : 30/30 faits, latence maximale 15,76 s.
 - Tests : 420 tests agent + 20 tests scripts Python ; tests shell non rejoués
   sous Windows.
 - Détails : [`evaluation.md`](evaluation.md),

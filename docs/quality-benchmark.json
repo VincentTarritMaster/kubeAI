@@ -1,0 +1,38 @@
+[
+  {
+    "id": "A-fr",
+    "language": "fr",
+    "question": "Donne-moi l’état de santé actuel du cluster, tous namespaces confondus. Indique les pods malsains, les redémarrages et les données manquantes.",
+    "required": ["kubeai-observed", "1/1", "pods", "redémarrages", "données manquantes"]
+  },
+  {
+    "id": "A-en",
+    "language": "en",
+    "question": "Give me the current health of the cluster across all namespaces. List unhealthy pods, restarts, and missing data.",
+    "required": ["kubeai-observed", "1/1", "pods", "restart", "missing data"]
+  },
+  {
+    "id": "B-fr",
+    "language": "fr",
+    "question": "Analyse l’incident applications/kubeai-demo-incident entre 2026-10-28T08:00:09Z et 2026-10-28T08:04:10Z. Donne la chronologie UTC complète avec les preuves.",
+    "required": ["08:00:09", "08:01:39", "08:03:09", "08:04:09", "connection refused"]
+  },
+  {
+    "id": "B-en",
+    "language": "en",
+    "question": "Analyze the incident applications/kubeai-demo-incident between 2026-10-28T08:00:09Z and 2026-10-28T08:04:10Z. Give the complete UTC timeline with evidence.",
+    "required": ["08:00:09", "08:01:39", "08:03:09", "08:04:09", "connection refused"]
+  },
+  {
+    "id": "C-fr",
+    "language": "fr",
+    "question": "Pour l’incident applications/kubeai-demo-incident entre 2026-10-28T08:00:09Z et 2026-10-28T08:04:10Z, corrèle les logs, le CPU et les erreurs HTTP. Cite les valeurs observées et les données manquantes.",
+    "required": ["CPU", "0.019", "0.088", "HTTP", "p95"]
+  },
+  {
+    "id": "C-en",
+    "language": "en",
+    "question": "For the incident applications/kubeai-demo-incident between 2026-10-28T08:00:09Z and 2026-10-28T08:04:10Z, correlate logs, CPU and HTTP errors. Cite observed values and missing data.",
+    "required": ["CPU", "0.019", "0.088", "HTTP", "p95"]
+  }
+]

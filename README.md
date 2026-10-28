@@ -122,7 +122,8 @@ cluster. La page
 la validation du 22 octobre est dans
 [`docs/validation-demo-http-2026-10-22.md`](docs/validation-demo-http-2026-10-22.md).
 L'évaluation consolidée, les limites et les objectifs non certifiés sont dans
-[`docs/evaluation.md`](docs/evaluation.md).
+[`docs/evaluation.md`](docs/evaluation.md). Le benchmark FR/EN contrôlé obtient
+**30/30 faits** avec une latence maximale de **15,76 s**.
 
 ## Sécurité et limites
 
