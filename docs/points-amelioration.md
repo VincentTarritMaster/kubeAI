@@ -22,27 +22,14 @@ qui restent réellement à traiter.
 - A/B/C validés en conditions réelles ;
 - tool-calling Mistral avec retry, message explicite et synthèse de secours ;
 - garde-fou sur les fenêtres UTC explicites ;
-- **417 tests agent** et **20 tests scripts Python** passent ;
+- **audit JSON** et envoi vers Loki (`job="kubeai-audit"`) ;
+- **quota par clé** : 10 requêtes/minute, rafale 5, réponse 429 ;
+- **420 tests agent** et **20 tests scripts Python** passent ;
 - document consolidé [`evaluation.md`](evaluation.md).
 
 ## Points restants
 
-### 1. Audit et quotas — priorité moyenne
-
-Toujours absent :
-
-- journal d’audit structuré : utilisateur, outil, portée, période, résultat,
-  délai ;
-- quota de requêtes côté agent.
-
-Deux options :
-
-- **A. Implémenter** : logs structurés + limite par clé/IP + tests ;
-- **B. Documenter comme limite locale assumée** dans le rapport.
-
-C’est le dernier point technique de la fiche.
-
-### 2. Qualité multilingue et mesure formelle — priorité moyenne
+### 1. Qualité multilingue et mesure formelle — priorité moyenne
 
 B/C sont validés en français. Il reste à :
 
@@ -51,7 +38,7 @@ B/C sont validés en français. Il reste à :
 - mesurer formellement les objectifs **≥ 90 % de faits corrects** et
   **< 60 s**, non certifiés aujourd’hui.
 
-### 3. Livrables — priorité haute
+### 2. Livrables — priorité haute
 
 - captures A/B/C en français ;
 - captures A/B/C en anglais ;
@@ -66,15 +53,15 @@ B/C sont validés en français. Il reste à :
 - ❌ Alertes / Alertmanager (consigne du professeur).
 - ❌ Sécurité cloud (TLS/Ingress/NetworkPolicies) tant qu’il n’y a pas de cloud.
 - ❌ Quatrième étudiant / rôle 4 (3 étudiants acceptés).
-- ❌ Orchestration des outils : le tool agent LangChain est maintenant intégré.
+- ❌ Orchestration des outils : le tool agent LangChain est intégré.
+- ❌ Audit + quotas : implémentés en mémoire pour la démo locale.
 
 ## Bilan
 
-Il reste **2 chantiers techniques** :
+Il reste **1 chantier technique** :
 
-1. audit + quotas ;
-2. qualité multilingue et mesure formelle.
+1. qualité multilingue et mesure formelle.
 
 Et **1 chantier de livraison** :
 
-3. captures, rapport, slides et push final.
+2. captures, rapport, slides et push final.

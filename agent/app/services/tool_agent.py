@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 import re
+import time
 
 from pydantic import ValidationError
 
@@ -20,8 +21,9 @@ logger = logging.getLogger("uvicorn.error")
 class ToolAgent:
     MAX_CONTEXT_CHARS = 20000
 
-    def __init__(self, diagnosis):
+    def __init__(self, diagnosis, audit=None):
         self.diagnosis = diagnosis
+        self.audit = audit
         self.settings = diagnosis.llm.settings
         self.tools = ObservabilityTools(diagnosis)
 
@@ -208,6 +210,8 @@ class ToolAgent:
                 if tool_count > self.settings.agent_max_steps:
                     raise UpstreamError("agent", "The tool-call budget was reached.")
                 name = call["function"]["name"]
+                tool_started = time.perf_counter()
+                arguments = {}
                 try:
                     arguments = json.loads(call["function"]["arguments"], object_pairs_hook=_unique_json_object)
                     if not isinstance(arguments, dict) or name not in self.tools.registry:
@@ -221,6 +225,10 @@ class ToolAgent:
                         if arguments["kind"] == "answer" and not successful:
                             raise ValueError("Read fresh evidence before making monitoring claims")
                         answer = redact_text(arguments["answer"], self.sensitive())
+                        if self.audit:
+                            self.audit.tool("respond", arguments, {
+                                "status": arguments["kind"], "namespace": self.settings.namespace,
+                            }, int((time.perf_counter() - tool_started) * 1000))
                         windows = []
                         for entry in trace:
                             data = entry["result"]
@@ -255,6 +263,9 @@ class ToolAgent:
                 except UpstreamError as error:
                     result = {"error": "source_unavailable", "source": error.source, "message": error.message}
                 safe = bounded_result(result, self.sensitive())
+                if self.audit:
+                    self.audit.tool(name, arguments, result,
+                                    int((time.perf_counter() - tool_started) * 1000))
                 trace.append({"name": name, "result": safe})
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": name,
                                  "content": json.dumps(safe, ensure_ascii=False)})

@@ -82,7 +82,7 @@ un résultat certifié.
 
 | Suite | Résultat |
 |---|---|
-| Tests agent | **417 passed** |
+| Tests agent | **420 passed** |
 | Tests scripts Python | **20 passed** |
 | Tests shell/Bash | 11 non exécutables dans l'environnement Windows actuel (accès WSL/Bash refusé) |
 | Compilation Python | OK |
@@ -140,11 +140,22 @@ de questions.
 - aucun shell, URL libre, PromQL/LogQL arbitraire ou remédiation ;
 - garde-fou numérique sur les affirmations de la réponse finale.
 
+### Audit et quotas
+
+- Audit JSON émis par l'agent avec `timestamp`, `request_id`, empreinte
+  `sha256` de la clé, endpoint, outil, namespace/pod, fenêtre, statut et durée.
+- Les événements sont écrits dans les logs de l'agent et poussés vers Loki avec
+  `job="kubeai-audit"`.
+- Aucun token, secret ou contenu intégral de question n'est journalisé.
+- Quota en mémoire par empreinte de clé : **10 requêtes/minute**, rafale **5**.
+- Dépassement : HTTP `429` avec `Retry-After`.
+- Paramètres : `KUBEAI_AUDIT_ENABLED`, `KUBEAI_RATE_LIMIT_PER_MINUTE`,
+  `KUBEAI_RATE_LIMIT_BURST`.
+
 ### Limites de sécurité
 
 - clé Bearer partagée, sans identité utilisateur forte ;
-- **aucun journal d'audit structuré** ;
-- **aucun quota de requêtes** ;
+- quota en mémoire, remis à zéro au redémarrage et non distribué entre répliques ;
 - deux clusters locaux et un réseau Docker privé, sans Ingress/TLS public ;
 - pas de NetworkPolicies cloud ;
 - les logs et résultats d'outils sont traités comme des données non fiables,
@@ -175,14 +186,14 @@ de questions.
 - RBAC read-only ;
 - A/B/C reproductibles ;
 - B/C factuels sur les scénarios contrôlés ;
-- 417 tests agent.
+- audit JSON et quota par clé ;
+- 420 tests agent.
 
 **Points non certifiés :**
 
 - 90 % de faits corrects sur un jeu représentatif ;
 - réponse systématiquement sous 60 secondes ;
-- équivalence stricte FR/EN ;
-- audit et quotas.
+- équivalence stricte FR/EN.
 
 Ces points doivent être présentés comme des limites ou des travaux restants,
 pas comme des résultats acquis.

@@ -51,9 +51,9 @@ def completion(content, model=CHAT_MODEL):
                                    "finish_reason": "stop"}]}
 
 
-async def finish_nonstream(service, chat):
+async def finish_nonstream(service, chat, audit=None):
     if service.llm.settings.chat_mode == "agent":
-        text, observation = await ToolAgent(service).run(chat)
+        text, observation = await ToolAgent(service, audit=audit).run(chat)
         return completion(text, chat.model), observation
     route = diagnostic_route(chat)
     if route == "out_of_scope":
@@ -91,7 +91,7 @@ async def finish_nonstream(service, chat):
 async def diagnose(body: DiagnosisRequest, request: Request):
     schema = AgentChatRequest if request.app.state.settings.chat_mode == "agent" else ChatRequest
     chat = schema(messages=[ChatMessage(role="user", content=body.question)])
-    answer, observation = await finish_nonstream(request.app.state.diagnosis, chat)
+    answer, observation = await finish_nonstream(request.app.state.diagnosis, chat, getattr(request.state, "audit", None))
     return {"model": CHAT_MODEL, "answer": answer["choices"][0]["message"]["content"],
             "observation": observation, "usage": answer.get("usage")}
 
@@ -147,7 +147,7 @@ async def chat_completions(body: AgentChatRequest, request: Request):
     if service.llm.settings.chat_mode == "legacy":
         body = ChatRequest.model_validate(await request.json())
     if not body.stream:
-        answer, _ = await finish_nonstream(service, body)
+        answer, _ = await finish_nonstream(service, body, getattr(request.state, "audit", None))
         return answer
 
     if service.llm.settings.chat_mode == "agent":
@@ -155,7 +155,7 @@ async def chat_completions(body: AgentChatRequest, request: Request):
                   "created": int(time.time()), "model": body.model}
 
         async def agent_events():
-            task = asyncio.create_task(ToolAgent(service).run(body))
+            task = asyncio.create_task(ToolAgent(service, audit=getattr(request.state, "audit", None)).run(body))
             try:
                 yield _event(common, role="assistant")
                 while not task.done():

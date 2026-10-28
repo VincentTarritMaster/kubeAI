@@ -24,8 +24,8 @@
 |**Orchestration des outils / réponses structurées**|✅ Tool agent LangChain|Le modèle choisit les outils et arguments ; garde-fou de preuves à maintenir|
 |**Trois démonstrations A/B/C**|✅ FR validé ; EN partiel|Captures FR/EN + rapport|
 |**Évaluation exactitude / fiabilité / sécurité / limites**|⚠️ Documentée, objectifs non certifiés|Voir `docs/evaluation.md` ; 90 % et < 60 s à mesurer|
-|Journal d’audit + quotas|⚠️ Absent|À implémenter ou documenter comme limite locale|
-|Tests automatisés|✅ 417 agent + 20 scripts|Tests shell non rejoués sous Windows|
+|Journal d’audit + quotas|✅ Audit JSON + quota par clé|Limite en mémoire, une réplique|
+|Tests automatisés|✅ 420 agent + 20 scripts|Tests shell non rejoués sous Windows|
 |Lecture seule|✅ RBAC + aucune remédiation|—|
 |Application de test|✅ Pod synthétique|—|
 |Scénarios reproductibles|✅ Scripts + docs|—|

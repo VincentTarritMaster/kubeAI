@@ -16,3 +16,6 @@ data:
   MISTRAL_MODEL: mistral-small-2603
   MISTRAL_API_KEY_FILE: /var/run/secrets/kubeai-mistral/api-key
   LLM_TIMEOUT_SECONDS: "60"
+  KUBEAI_AUDIT_ENABLED: "true"
+  KUBEAI_RATE_LIMIT_PER_MINUTE: "10"
+  KUBEAI_RATE_LIMIT_BURST: "5"

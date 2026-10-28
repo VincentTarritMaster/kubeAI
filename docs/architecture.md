@@ -150,7 +150,7 @@ Le pod de démonstration expose aussi `http_requests_total` et
 - `/cluster/status` : `scope=cluster`, `namespace=*`, CPU/mémoire non nuls.
 - A/B/C : validés avec preuves réelles (logs, Mimir, Loki) en français ; B/C
   rejoués le 28 octobre 2026.
-- Tests : 417 tests agent + 20 tests scripts Python ; tests shell non rejoués
+- Tests : 420 tests agent + 20 tests scripts Python ; tests shell non rejoués
   sous Windows.
 - Détails : [`evaluation.md`](evaluation.md),
   [`validation-demo-http-2026-10-22.md`](validation-demo-http-2026-10-22.md),

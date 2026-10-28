@@ -32,6 +32,9 @@ class Settings:
     agent_tool_protocol: str = "auto"
     agent_max_steps: int = 8
     agent_timeout: float = 180.0
+    audit_enabled: bool = False
+    rate_limit_per_minute: int = 0
+    rate_limit_burst: int = 0
     observed_cluster: str = ""
     kubernetes_access_mode: str = "in-cluster"
     kubernetes_url: str = "https://kubernetes.default.svc"
@@ -60,6 +63,12 @@ class Settings:
             raise ValueError("KUBEAI_TOOL_PROTOCOL doit être auto, native ou json")
         if not 2 <= self.agent_max_steps <= 12 or not 10 <= self.agent_timeout <= 600:
             raise ValueError("Invalid agent execution limits")
+        if not 0 <= self.rate_limit_per_minute <= 6000:
+            raise ValueError("KUBEAI_RATE_LIMIT_PER_MINUTE doit être compris entre 0 et 6000")
+        if not 0 <= self.rate_limit_burst <= 1000:
+            raise ValueError("KUBEAI_RATE_LIMIT_BURST doit être compris entre 0 et 1000")
+        if self.rate_limit_per_minute and not self.rate_limit_burst:
+            raise ValueError("KUBEAI_RATE_LIMIT_BURST doit être positif si le quota est activé")
         # Keep previously deployed values working while exposing the two
         # canonical profiles consistently in the API and configuration.
         aliases = {"mistral": "mistral-api", "apertus": "local"}
@@ -125,6 +134,9 @@ class Settings:
             agent_tool_protocol=os.getenv("KUBEAI_TOOL_PROTOCOL", "auto"),
             agent_max_steps=int(os.getenv("KUBEAI_AGENT_MAX_STEPS", "8")),
             agent_timeout=float(os.getenv("KUBEAI_AGENT_TIMEOUT_SECONDS", "180")),
+            audit_enabled=os.getenv("KUBEAI_AUDIT_ENABLED", "true").strip().lower() not in {"0", "false", "no"},
+            rate_limit_per_minute=int(os.getenv("KUBEAI_RATE_LIMIT_PER_MINUTE", "10")),
+            rate_limit_burst=int(os.getenv("KUBEAI_RATE_LIMIT_BURST", "5")),
             observed_cluster=os.getenv("OBSERVED_CLUSTER", ""),
             kubernetes_access_mode=access_mode,
             kubernetes_url=os.getenv("KUBERNETES_API_URL", cls.kubernetes_url),

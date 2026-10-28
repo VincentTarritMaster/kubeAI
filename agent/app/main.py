@@ -1,4 +1,7 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import time
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -14,9 +17,11 @@ from app.clients.kubernetes_connection import build_kubernetes_http_options
 from app.clients.prometheus_client import PrometheusClient
 from app.clients.loki_client import LokiClient
 from app.config import Settings
+from app.services.audit import AuditContext, AuditLog, key_id
 from app.services.cluster_status import ClusterStatusService
 from app.services.diagnosis import DiagnosisService
 from app.services.llm_service import LLMService
+from app.services.limits import RateLimiter
 
 
 def create_app(settings: Settings | None = None, *, kubernetes_transport=None, prometheus_transport=None,
@@ -43,6 +48,10 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
             application.state.diagnosis = DiagnosisService(
                 application.state.cluster_status, LokiClient(loki_http, config), LLMService(llm_http, config),
             )
+            application.state.audit = AuditLog(config, loki_http)
+            application.state.rate_limiter = RateLimiter(
+                config.rate_limit_per_minute, config.rate_limit_burst,
+            )
             yield
 
     application = FastAPI(
@@ -63,6 +72,46 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
             if item.get("type") == "current_question_too_long":
                 return JSONResponse(status_code=413, content={"detail": item["msg"]})
         return await request_validation_exception_handler(request, error)
+
+    @application.middleware("http")
+    async def audit_and_quota(request: Request, call_next):
+        path = request.url.path
+        if path in {"/health", "/ready"}:
+            return await call_next(request)
+        audit = request.app.state.audit
+        identity = key_id(request.headers.get("authorization", ""))
+        request_id = uuid.uuid4().hex
+        request.state.audit = AuditContext(audit, request_id, identity)
+        started = time.perf_counter()
+        status = 500
+        if path in {"/v1/chat/completions", "/diagnose"}:
+            allowed, retry_after = request.app.state.rate_limiter.allow(identity)
+            if not allowed:
+                status = 429
+                audit.emit({
+                    "event": "request", "request_id": request_id, "key_id": identity,
+                    "endpoint": path, "method": request.method, "status": status,
+                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                })
+                return JSONResponse(
+                    status_code=429,
+                    headers={"Retry-After": str(retry_after)},
+                    content={"detail": {
+                        "source": "quota",
+                        "message": "Quota de requêtes dépassé ; réessayez plus tard.",
+                        "retry_after_seconds": retry_after,
+                    }},
+                )
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            audit.emit({
+                "event": "request", "request_id": request_id, "key_id": identity,
+                "endpoint": path, "method": request.method, "status": status,
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+            })
 
     application.include_router(router)
     application.include_router(chat_router)
