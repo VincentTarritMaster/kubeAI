@@ -1,0 +1,121 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kubeai
+resources:
+  - namespace.yaml
+  - ../../../monitoring/mimir.yaml
+  - ../../../monitoring/loki.yaml
+  - ../../../agent-rbac.yaml
+  - ../../../agent-configmap.yaml
+  - ../../../agent-deployment.yaml
+  - ../../../agent-service.yaml
+  - ../../../open-webui-storage.yaml
+  - ../../../open-webui.yaml
+  - observability-proxy.yaml
+configMapGenerator:
+  - name: mimir-config
+    files:
+      - mimir.yml=../../../monitoring/config/mimir.yml
+    options:
+      disableNameSuffixHash: true
+  - name: loki-config
+    files:
+      - loki.yml=../../../monitoring/config/loki.yml
+    options:
+      disableNameSuffixHash: true
+  - name: observability-proxy-config
+    files:
+      - nginx.conf=nginx.conf
+    options:
+      disableNameSuffixHash: true
+patches:
+  - target:
+      kind: PersistentVolumeClaim
+      name: mimir-data
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: mimir-data
+      spec:
+        storageClassName: exoscale-sbs
+  - target:
+      kind: PersistentVolumeClaim
+      name: loki-data
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: loki-data
+      spec:
+        storageClassName: exoscale-sbs
+  - target:
+      kind: PersistentVolumeClaim
+      name: open-webui-data
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: open-webui-data
+      spec:
+        storageClassName: exoscale-sbs
+  - target:
+      kind: ConfigMap
+      name: kubeai-agent-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: kubeai-agent-config
+      data:
+        KUBERNETES_ACCESS_MODE: kubeconfig
+        KUBERNETES_CONTEXT: kubeai-observed
+        KUBERNETES_KUBECONFIG_FILE: /var/run/secrets/kubeai-observed/kubeconfig
+        OBSERVED_CLUSTER: kubeai-observed
+        KUBERNETES_NAMESPACE: applications
+        MIMIR_URL: http://mimir.kubeai.svc:9009/prometheus
+        LOKI_URL: http://loki.kubeai.svc:3100
+  - target:
+      kind: Deployment
+      name: kubeai-agent
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kubeai-agent
+      spec:
+        template:
+          spec:
+            imagePullSecrets:
+              - name: kubeai-registry
+            volumes:
+              - name: watched-kubeconfig
+                secret:
+                  secretName: kubeai-observed-kubeconfig
+                  defaultMode: 0444
+            containers:
+              - name: agent
+                volumeMounts:
+                  - name: watched-kubeconfig
+                    mountPath: /var/run/secrets/kubeai-observed
+                    readOnly: true
+  - target:
+      kind: Deployment
+      name: open-webui
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: open-webui
+      spec:
+        template:
+          spec:
+            containers:
+              - name: open-webui
+                env:
+                  - name: ENABLE_SIGNUP
+                    value: "False"
+images:
+  - name: kubeai-agent
+    newName: registry.example.invalid/kubeai-agent
+    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"

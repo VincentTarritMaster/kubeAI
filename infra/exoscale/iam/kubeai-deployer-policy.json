@@ -1,0 +1,62 @@
+{
+  "default-service-strategy": "deny",
+  "services": {
+    "compute": {
+      "type": "rules",
+      "rules": [
+        {
+          "action": "allow",
+          "expression": "operation in ['list-zones', 'get-operation', 'list-quotas', 'list-instance-types', 'list-sks-cluster-versions']"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation in ['list-sks-clusters', 'list-instances', 'list-block-storage-volumes', 'list-load-balancers', 'list-private-networks', 'list-security-groups']"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'create-sks-cluster' && parameters.name in ['kubeai-observed', 'kubeai-supervision'] && parameters.level == 'starter'"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'get-sks-cluster' && resources.sks_cluster.name in ['kubeai-observed', 'kubeai-supervision']"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'generate-sks-cluster-kubeconfig' && resources.sks_cluster.name in ['kubeai-observed', 'kubeai-supervision']"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'create-sks-nodepool' && ((resources.sks_cluster.name == 'kubeai-observed' && parameters.name == 'observed' && parameters.instance_type.id == 'b6e9d1e8-89fc-4db3-aaa4-9b4c5b1d0844') || (resources.sks_cluster.name == 'kubeai-supervision' && parameters.name == 'supervision' && parameters.instance_type.id == 'c6f99499-7f59-4138-9427-a09db13af2bc')) && int(parameters.disk_size) == 20 && int(parameters.size) == 1"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'get-sks-nodepool' && resources.sks_cluster.name in ['kubeai-observed', 'kubeai-supervision'] && resources.sks_nodepool.name in ['observed', 'supervision']"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'scale-sks-nodepool' && resources.sks_cluster.name in ['kubeai-observed', 'kubeai-supervision'] && resources.sks_nodepool.name in ['observed', 'supervision'] && (int(parameters.size) == 0 || int(parameters.size) == 1)"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'create-private-network' && parameters.name == 'kubeai-private'"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'create-security-group' && parameters.name == 'kubeai-private-sg'"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'add-rule-to-security-group' && resources.security_group.name == 'kubeai-private-sg'"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'get-security-group' && resources.security_group.name == 'kubeai-private-sg'"
+        },
+        {
+          "action": "allow",
+          "expression": "zone == 'ch-gva-2' && operation == 'get-private-network' && resources.private_network.name == 'kubeai-private'"
+        }
+      ]
+    }
+  }
+}

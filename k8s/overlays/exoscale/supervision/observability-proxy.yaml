@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-proxy
+  namespace: kubeai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: observability-proxy
+  template:
+    metadata:
+      labels:
+        app: observability-proxy
+        app.kubernetes.io/part-of: kubeai
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          args: ["-g", "daemon off;"]
+          ports:
+            - name: mimir-tls
+              containerPort: 9443
+            - name: loki-tls
+              containerPort: 9444
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: mimir-tls
+              scheme: HTTPS
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: mimir-tls
+              scheme: HTTPS
+            periodSeconds: 20
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: mtls
+              mountPath: /etc/nginx/mtls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: config
+          configMap:
+            name: observability-proxy-config
+        - name: mtls
+          secret:
+            secretName: kubeai-observability-mtls
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-proxy
+  namespace: kubeai
+spec:
+  type: NodePort
+  selector:
+    app: observability-proxy
+  ports:
+    - name: mimir
+      port: 9443
+      targetPort: mimir-tls
+      nodePort: 30009
+    - name: loki
+      port: 9444
+      targetPort: loki-tls
+      nodePort: 30310

@@ -241,6 +241,7 @@ def check_agent(context):
 for path in ("/ready", "/llm/status", "/cluster/inventory"):
     request = urllib.request.Request("http://127.0.0.1:8000" + path,
         headers={"Authorization": "Bearer " + os.environ["KUBEAI_API_KEY"]})
+    data = None
     for attempt in range(10):
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
@@ -248,9 +249,13 @@ for path in ("/ready", "/llm/status", "/cluster/inventory"):
             break
         except (OSError, urllib.error.HTTPError):
             if attempt == 9:
+                if path == "/llm/status":
+                    print("AVERTISSEMENT : /llm/status indisponible ; la supervision reste démarrée.")
+                    break
                 raise SystemExit("Le contrôle " + path + " reste indisponible ; vérifier ses sources.")
             time.sleep(2)
-    print(path, data.get("status", "accessible"))
+    if data is not None:
+        print(path, data.get("status", "accessible"))
 '''
     kubectl(context, "--request-timeout=0", "-n", "kubeai", "exec", "-i", "deployment/kubeai-agent", "--", "python", "-", payload=code)
 

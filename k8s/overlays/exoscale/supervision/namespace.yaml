@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubeai
+  labels:
+    app.kubernetes.io/part-of: kubeai
+    kubeai.io/role: supervision

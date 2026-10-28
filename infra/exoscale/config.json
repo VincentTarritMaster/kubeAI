@@ -1,0 +1,43 @@
+{
+  "zone": "ch-gva-2",
+  "serviceLevel": "starter",
+  "privateNetwork": "kubeai-private",
+  "privateNetworkCidr": "10.20.0.0/24",
+  "privateNetworkStartIp": "10.20.0.2",
+  "privateNetworkEndIp": "10.20.0.200",
+  "privateNetworkNetmask": "255.255.255.0",
+  "securityGroup": "kubeai-private-sg",
+  "storageClass": "exoscale-sbs",
+  "image": "registry.example.invalid/kubeai-agent:0.1.0",
+  "currency": "CHF",
+  "hourlyEstimates": {
+    "standard.medium": 0.04666,
+    "standard.large": 0.09333
+  },
+  "clusters": [
+    {
+      "name": "kubeai-observed",
+      "role": "observed",
+      "nodepool": "observed",
+      "nodeType": "standard.medium",
+      "diskSizeGb": 20,
+      "namespace": "collecte",
+      "labels": {
+        "kubeai.io/role": "observed",
+        "kubeai.io/environment": "demo"
+      }
+    },
+    {
+      "name": "kubeai-supervision",
+      "role": "supervision",
+      "nodepool": "supervision",
+      "nodeType": "standard.large",
+      "diskSizeGb": 20,
+      "namespace": "kubeai",
+      "labels": {
+        "kubeai.io/role": "supervision",
+        "kubeai.io/environment": "demo"
+      }
+    }
+  ]
+}
