@@ -101,6 +101,7 @@ class ClusterPodStatus(BaseModel):
     ready: bool | None = None
     health: Literal["healthy", "unhealthy", "completed", "terminating", "unknown"]
     restarts: int | None = None
+    age_seconds: int | None = None
     containers: list[ClusterContainerStatus]
     issues: list[str]
 

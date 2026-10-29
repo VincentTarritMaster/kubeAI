@@ -53,8 +53,9 @@ def _date_fields(text):
     if found:
         day, month, year = map(int, found.groups())
         return year, month, day
-    found = re.search(r"\b(\d{1,2})\s+([a-z]+)\.?(?:\s+(\d{4}))?\b", text)
-    if found and found.group(2) in _MONTHS:
+    months = "|".join(sorted((re.escape(name) for name in _MONTHS), key=len, reverse=True))
+    found = re.search(r"\b(\d{1,2})\s+(" + months + r")\.?(?:\s+(\d{4}))?\b", text)
+    if found:
         return (int(found.group(3)) if found.group(3) else None,
                 _MONTHS[found.group(2)], int(found.group(1)))
     found = re.search(r"\b([a-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})\b", text)
@@ -468,7 +469,76 @@ def application_cpu_episode(logs, points):
     return {**selected, "count": len(episodes)}
 
 
-def render(report, ai_note, *, zone=DEFAULT_ZONE):
+def _english_observation(text):
+    replacements = (
+        ("Échantillon mesuré : ", "Measured sample: "),
+        ("Marqueur ", "Marker "),
+        ("enregistré dans Loki", "recorded in Loki"),
+        ("cœur(s)", "cores"), ("cœurs", "cores"), ("coeur(s)", "cores"),
+        ("ratio d'erreurs HTTP 5xx (0 à 1)", "HTTP 5xx error ratio (0 to 1)"),
+        ("secondes de latence HTTP p95", "seconds HTTP p95 latency"),
+        ("redémarrage(s) cumulés", "cumulative restarts"),
+        ("octets de mémoire active", "bytes working set"),
+        ("octets de limite mémoire", "bytes memory limit"),
+        ("cœur(s) de limite CPU", "cores CPU limit"),
+        ("CPU du processus applicatif", "process CPU"),
+        ("ratio d'erreurs HTTP 5xx", "HTTP 5xx error ratio"),
+        ("secondes", "seconds"), ("octets", "bytes"),
+    )
+    result = text or ""
+    for source, target in replacements:
+        result = result.replace(source, target)
+    return result
+
+
+def render_english(report, ai_note, *, zone=DEFAULT_ZONE):
+    resource = "/".join(s for s in (report["namespace"], report["pod"]) if s) or "cluster"
+    start_local = local_time(report["start"], zone)
+    end_local = local_time(report["end"], zone)
+    timeline = report.get("timeline", [])
+    lines = ["## Incident observed", "",
+             f"**Resource:** `{resource}`.",
+             f"**Window:** {start_local.isoformat()} → {end_local.isoformat()} ({zone}).", ""]
+    phases = [item for item in timeline if item["source"] == "Loki" and
+              re.search(r"\bphase\s*=\s*(normal|anomaly_start|recovered|complete)\b",
+                        item["observation"], re.I)]
+    if phases:
+        lines += ["**Phase markers (Loki)**", ""]
+        for item in phases:
+            lines.append(f"- `{item['timestamp']}` — `{_english_observation(item['observation'])}`")
+    metrics = [item for item in timeline if item["source"] == "Mimir"]
+    if metrics:
+        lines += ["", "**Measured metrics (Mimir)**", ""]
+        for item in metrics[:12]:
+            lines.append(f"- `{item['timestamp']}` — {_english_observation(item['observation'])}")
+    events = [item for item in timeline if item["source"] == "Kubernetes"]
+    if events:
+        lines += ["", "**Kubernetes events retained**", ""]
+        for item in events[:8]:
+            lines.append(f"- `{item['timestamp']}` — {_english_observation(item['observation'])}")
+    if not phases and not metrics and not events:
+        lines += ["No retained evidence matches the requested resource and window."]
+    lines += ["", "**Evidence limits**", ""]
+    lines.append("- Temporal proximity does not prove a root cause.")
+    if not events:
+        lines.append("- No Kubernetes event was retained for this window.")
+    if report.get("missing"):
+        lines.append("- Missing evidence: the retained source data is incomplete; no missing value is invented.")
+    if report.get("warnings"):
+        lines.append("- Source warnings are present; see the source status in technical details.")
+    lines += ["", technical_details(title="Technical details / Evidence", lines=[
+        f"UTC window: {report['start']} → {report['end']}",
+        f"Sources: " + ", ".join(f"{name}={value['status']}" for name, value in report["sources"].items()),
+        f"Data status: {report['data_status']}",
+        f"Detailed evidence entries: {len(timeline)}",
+        "Deterministic report: no model-generated fact is used.",
+    ])]
+    return "\n".join(lines)
+
+
+def render(report, ai_note, *, zone=DEFAULT_ZONE, language="fr"):
+    if language == "en":
+        return render_english(report, ai_note, zone=zone)
     resource = "/".join(s for s in (report["namespace"], report["pod"]) if s) or "cluster"
     timeline = report["timeline"]
     phases = [item for item in timeline if item["source"] == "Loki" and re.search(
@@ -897,7 +967,7 @@ async def scan_date(service, parts, inventory=None):
     return day_window, None, (report, inventory, combined, combined_logs)
 
 
-async def investigate(service, chat):
+async def investigate(service, chat, language="fr"):
     window, error, scanned = await resolve_request(service, chat)
     if error:
         return error, {"scope": "incident", "status": "clarification_required", "message": error}
@@ -941,4 +1011,4 @@ async def investigate(service, chat):
                 ai_note = f"Appel à {provider_name} échoué ({error.message}) ; chronologie déterministe conservée."
         except (KeyError, IndexError, TypeError, ValueError):
             ai_note = f"Réponse de {provider_name} rejetée : format ou priorité invalide. Chronologie déterministe conservée."
-    return render(report, ai_note, zone=service.llm.settings.display_timezone), report
+    return render(report, ai_note, zone=service.llm.settings.display_timezone, language=language), report

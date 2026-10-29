@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
           "septembre", "octobre", "novembre", "décembre")
+EN_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+             "August", "September", "October", "November", "December")
 DEFAULT_ZONE = "Europe/Zurich"
 
 
@@ -17,8 +19,9 @@ def local_time(value: str | datetime, zone: str = DEFAULT_ZONE) -> datetime:
     return instant.astimezone(ZoneInfo(zone))
 
 
-def date_label(moment: datetime) -> str:
-    return f"{moment.day} {MONTHS[moment.month - 1]} {moment.year}"
+def date_label(moment: datetime, language: str = "fr") -> str:
+    months = EN_MONTHS if language == "en" else MONTHS
+    return f"{moment.day} {months[moment.month - 1]} {moment.year}"
 
 
 def offset_label(moment: datetime) -> str:
@@ -29,12 +32,17 @@ def offset_label(moment: datetime) -> str:
     return f"UTC{sign}{hours}" + (f":{minutes:02d}" if minutes else "")
 
 
-def zone_label(zone: str) -> str:
+def zone_label(zone: str, language: str = "fr") -> str:
+    if language == "en":
+        return "Swiss time" if zone == "Europe/Zurich" else "local time"
     return "Heure suisse" if zone == "Europe/Zurich" else "Heure locale"
 
 
-def full_time(value: str | datetime, zone: str = DEFAULT_ZONE) -> str:
+def full_time(value: str | datetime, zone: str = DEFAULT_ZONE, language: str = "fr") -> str:
     moment = local_time(value, zone)
+    if language == "en":
+        return (f"{date_label(moment, 'en')} at {moment.hour:02d}:{moment.minute:02d}:"
+                f"{moment.second:02d} ({zone_label(zone, 'en')} — {zone}, {offset_label(moment)})")
     return (f"{date_label(moment)} à {moment.hour:02d} h {moment.minute:02d} min "
             f"{moment.second:02d} s ({zone_label(zone).lower()} — {zone}, {offset_label(moment)})")
 
@@ -43,17 +51,26 @@ def short_time(value: str | datetime, zone: str = DEFAULT_ZONE) -> str:
     return local_time(value, zone).strftime("%H:%M:%S")
 
 
-def day_heading(moment: datetime, zone: str, *, mixed_offset: bool = False) -> list[str]:
-    offset = "offset indiqué pour chaque événement" if mixed_offset else offset_label(moment)
-    label = zone_label(zone) if zone == DEFAULT_ZONE else f"{zone_label(zone)} — {zone}"
-    return [f"**{date_label(moment)} · {label} ({offset})**", ""]
+def day_heading(moment: datetime, zone: str, *, mixed_offset: bool = False,
+                language: str = "fr") -> list[str]:
+    offset = ("offset indiqué pour chaque événement" if language == "fr"
+              else "offset shown for each event") if mixed_offset else offset_label(moment)
+    label = zone_label(zone, language)
+    if zone != DEFAULT_ZONE:
+        label = f"{label} — {zone}"
+    return [f"**{date_label(moment, language)} · {label} ({offset})**", ""]
 
 
-def technical_details(lines: list[str]) -> str:
-    """Keep exact UTC references available while making the main answer compact."""
-    safe = "\n".join(escape(line, quote=False) for line in lines)
-    return ("<details>\n<summary>Détails techniques / Preuves</summary>\n\n"
-            f"<pre>{safe}</pre>\n</details>")
+def technical_details(lines: list[str], *, title: str = "Détails techniques / Preuves") -> str:
+    """Emit a safe code block marker; the WebUI adapter turns it into <details>."""
+    cleaned = []
+    for line in lines:
+        line = re.sub(r"\*\*(.*?)\*\*", r"\1", line)
+        line = line.replace("`", "")
+        cleaned.append(escape(line, quote=False))
+    safe = "\n".join(cleaned)
+    return ("\n\n```text\nKUBEAI_TECHNICAL_DETAILS|" + title + "\n" +
+            safe + "\n```")
 
 
 def missing_summary(items: list[str], *, limit: int = 3) -> str:

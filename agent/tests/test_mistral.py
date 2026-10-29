@@ -305,10 +305,10 @@ def test_local_profile_failure_is_explicit_and_does_not_expose_upstream_details(
     with client:
         status = client.get("/llm/status")
         assert status.status_code == 503
-        assert "Quota ou limite de requêtes Apertus local" in status.json()["detail"]["message"]
+        assert status.json()["detail"]["code"] == "LLM_QUOTA"
         response = client.post("/v1/chat/completions", json=chat_body())
         assert response.status_code == 503
-        assert "Connexion au service Apertus local impossible" in response.json()["detail"]["message"]
+        assert response.json()["detail"]["code"] == "LLM_CONNECTION"
         assert "private-upstream-token" not in response.text
 
 
@@ -346,7 +346,7 @@ def test_missing_key_is_explicit_and_does_not_contact_provider():
         for streaming in (False, True):
             response = client.post("/v1/chat/completions", json=chat_body(stream=streaming))
             assert response.status_code == 503
-            assert "Clé Mistral manquante" in response.json()["detail"]["message"]
+            assert response.json()["detail"]["code"] == "LLM_AUTH"
         assert client.get("/cluster/status").status_code == 200
     assert calls == []
 
@@ -367,20 +367,22 @@ def test_deterministic_health_is_french_structured_and_needs_no_key():
     assert calls == []
 
 
-@pytest.mark.parametrize("status,phrase", [(401, "Authentification"), (403, "Authentification"),
-                                           (429, "Quota"), (500, "indisponible"), (503, "indisponible")])
-def test_provider_http_errors_have_sanitized_messages(status, phrase):
+@pytest.mark.parametrize("status,code", [(401, "LLM_AUTH"), (403, "LLM_AUTH"),
+                                        (429, "LLM_QUOTA"), (500, "LLM_UNAVAILABLE"),
+                                        (503, "LLM_UNAVAILABLE")])
+def test_provider_http_errors_have_sanitized_messages(status, code):
     client, _ = make_client(lambda request: httpx.Response(status, json={"detail": "private-token-123"}))
     with client:
         for streaming in (False, True):
             response = client.post("/v1/chat/completions", json=chat_body(stream=streaming))
             assert response.status_code == 503
-            assert phrase in response.json()["detail"]["message"]
+            assert response.json()["detail"]["code"] == code
             assert "private-token-123" not in response.text
 
 
-@pytest.mark.parametrize("error,phrase", [(httpx.ReadTimeout, "Délai"), (httpx.ConnectError, "Connexion")])
-def test_timeout_or_connection_failure(error, phrase):
+@pytest.mark.parametrize("error,code", [(httpx.ReadTimeout, "LLM_TIMEOUT"),
+                                        (httpx.ConnectError, "LLM_CONNECTION")])
+def test_timeout_or_connection_failure(error, code):
     def handler(request):
         raise error("transport details with unit-secret-123456", request=request)
 
@@ -388,7 +390,7 @@ def test_timeout_or_connection_failure(error, phrase):
     with client:
         response = client.post("/v1/chat/completions", json=chat_body())
     assert response.status_code == 503
-    assert phrase in response.json()["detail"]["message"]
+    assert response.json()["detail"]["code"] == code
     assert "unit-secret-123456" not in response.text
 
 
@@ -460,7 +462,7 @@ def test_stream_provider_timeout_returns_bounded_http_error_before_sse():
         response = client.post("/v1/chat/completions", json=chat_body(stream=True))
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/json")
-    assert "Délai de réponse" in response.json()["detail"]["message"]
+    assert response.json()["detail"]["code"] == "LLM_TIMEOUT"
 
 
 def test_partial_monitoring_still_states_missing_evidence():

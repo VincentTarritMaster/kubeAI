@@ -241,7 +241,7 @@ class ChatTests(unittest.TestCase):
         with self.client(key_file="/nonexistent-kubeai-key") as client:
             response = client.post("/v1/chat/completions", json=self.body())
             self.assertEqual(response.status_code, 503)
-            self.assertIn("Clé Apertus local introuvable", response.json()["detail"]["message"])
+            self.assertEqual(response.json()["detail"]["code"], "LLM_AUTH")
             self.assertEqual(client.get("/cluster/status").status_code, 200)
 
     def test_model_discovery_and_local_model_health(self):

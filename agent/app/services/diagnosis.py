@@ -1,18 +1,24 @@
 import asyncio
+import copy
 from pathlib import Path
 from datetime import datetime, timezone
 import json
+import time
+import uuid
 
 from app.clients.base import UpstreamError
 from app.models import ChatRequest
 from app.services.privacy import redact_data, redact_text
-from app.services.global_health import assess, focus_note, model_focus, render
+from app.services.global_health import ClusterHealthReport, assess, focus_note, model_focus, render
 from app.services.incident_timeline import investigate
 from app.services.correlation import correlate
 from app.services.presentation import DEFAULT_ZONE, full_time, technical_details
+from app.services.user_errors import language_of
 
 PROMPT = (Path(__file__).resolve().parents[1] / "prompts/system_prompt.txt").read_text(encoding="utf-8")
 CHAT_MODEL = "kubeai"
+HEALTH_SNAPSHOT_TTL_SECONDS = 120
+HISTORICAL_SNAPSHOT_TTL_SECONDS = 300
 
 
 class DiagnosisService:
@@ -20,6 +26,9 @@ class DiagnosisService:
         self.cluster_status = cluster_status
         self.loki = loki
         self.llm = llm
+        self._health_cache = {}
+        self._health_cache_at = 0.0
+        self._historical_cache = {}
 
     def sensitive_values(self):
         try:
@@ -28,14 +37,34 @@ class DiagnosisService:
             key = ""
         return (key,) if key else ()
 
+    async def _historical(self, kind, chat, operation):
+        if self.llm.settings.chat_mode != "agent":
+            return await operation()
+        key = (kind, chat.messages[-1].content)
+        now = time.monotonic()
+        cached = self._historical_cache.get(key)
+        if cached and now - cached[0] < HISTORICAL_SNAPSHOT_TTL_SECONDS:
+            return copy.deepcopy(cached[1])
+        result = await operation()
+        self._historical_cache[key] = (now, copy.deepcopy(result))
+        return result
+
     async def incident(self, chat):
-        return await investigate(self, chat)
+        return await self._historical("incident", chat, lambda: investigate(self, chat, language=language_of(chat.messages[-1].content)))
 
     async def correlation(self, chat):
-        return await correlate(self, chat)
+        return await self._historical("correlation", chat, lambda: correlate(self, chat, language=language_of(chat.messages[-1].content)))
 
-    async def global_health(self):
-        """Global health for chat and diagnosis; all facts precede optional Mistral use."""
+    async def global_health(self, *, refresh=False, question="", namespace=None):
+        """Deterministic health with an immutable short-lived LIVE snapshot."""
+        lang = language_of(question)
+        cache_key = namespace or "*"
+        now = time.monotonic()
+        cached = self._health_cache.get(cache_key)
+        if not refresh and cached and now - cached[1] < HEALTH_SNAPSHOT_TTL_SECONDS:
+            report = copy.deepcopy(cached[0])
+            return await self._render_health(report, lang), report
+
         inventory, usage = await asyncio.gather(
             self.cluster_status.inventory(),
             self.cluster_status.prometheus.cluster_usage(datetime.now(timezone.utc).timestamp()),
@@ -45,19 +74,62 @@ class DiagnosisService:
             raise inventory
         mimir_error = usage.message if isinstance(usage, UpstreamError) else (
             "Mimir read failed" if isinstance(usage, Exception) else None)
-        report = assess(inventory, None if isinstance(usage, Exception) else usage, mimir_error)
-        report = redact_data(report, self.sensitive_values())
-        ai_note = "**Analyse IA avancée :** indisponible ; le bilan ci-dessus est déterministe."
-        if report["state_code"] != "indeterminate" or report["nodes"]["total"] is not None \
-                or report["pods"]["total"] is not None:
+        report = assess(inventory, None if isinstance(usage, Exception) else usage, mimir_error,
+                        namespace=namespace)
+        report["snapshot_id"] = "live-" + uuid.uuid4().hex[:12]
+        report["cluster"] = self.llm.settings.observed_cluster
+        report["mode"] = "LIVE"
+        report = ClusterHealthReport.model_validate(redact_data(report, self.sensitive_values())).model_dump()
+        previous = cached[0] if cached else None
+        if previous:
+            changes = []
+            if previous.get("health") != report.get("health"):
+                changes.append({"field": "health", "label": "état",
+                                "before": previous.get("health"), "after": report.get("health")})
+            for key in ("pending", "failed", "succeeded", "unknown", "unhealthy", "running"):
+                before = (previous.get("pods") or {}).get(key)
+                after = (report.get("pods") or {}).get(key)
+                if before != after:
+                    changes.append({"field": "pods." + key, "label": "pods " + key,
+                                    "before": before, "after": after})
+            before_nodes = (previous.get("nodes") or {}).get("not_ready")
+            after_nodes = (report.get("nodes") or {}).get("not_ready")
+            if before_nodes != after_nodes:
+                changes.append({"field": "nodes.not_ready", "label": "nœuds NotReady",
+                                "before": before_nodes, "after": after_nodes})
+            for key, label, digits in (("cpu_cores", "CPU (cores)", 3),
+                                       ("memory_working_set_bytes", "memory (bytes)", 0)):
+                before = (previous.get("metrics") or {}).get(key)
+                after = (report.get("metrics") or {}).get(key)
+                if (before is not None and after is not None
+                        and abs(float(before) - float(after)) > (0.01 if digits else 1048576)):
+                    changes.append({"field": "metrics." + key, "label": label,
+                                    "before": round(float(before), digits),
+                                    "after": round(float(after), digits)})
+            if changes:
+                report["changes"] = changes
+                report["previous_snapshot_id"] = previous.get("snapshot_id")
+        self._health_cache[cache_key] = (copy.deepcopy(report), now)
+        return await self._render_health(report, lang), report
+
+    async def _render_health(self, report, lang):
+        if lang == "en":
+            ai_note = ("**Deterministic rules:** status, counters and metrics are calculated "
+                       "by code. Mistral is not used to modify this diagnosis.")
+        else:
+            ai_note = ("**Règles déterministes :** le statut, les compteurs et les métriques sont calculés "
+                       "par le code. Mistral n'est pas utilisé pour modifier ce diagnostic.")
+        # Legacy mode keeps its optional focus note; the agent/demo route never
+        # lets Mistral alter facts or wording.
+        if (lang == "fr" and self.llm.settings.chat_mode != "agent"
+                and (report["state_code"] != "indeterminate" or report["nodes"]["total"] is not None
+                     or report["pods"]["total"] is not None)):
             prompt = (
                 "Choisis uniquement une priorité étayée par le relevé. Réponds par un objet JSON "
                 "avec la seule clé focus : nodes, pods, restarts, events, availability ou none. "
                 "N'ajoute aucun fait, texte libre, cause ou commande."
             )
             try:
-                # Event messages can contain arbitrary application data. The model
-                # needs the probe classification, not the raw message.
                 model_report = {**report, "recent_warnings": [
                     {key: value for key, value in event.items() if key != "message"}
                     for event in report["recent_warnings"]]}
@@ -74,7 +146,7 @@ class DiagnosisService:
                     ai_note = "**Analyse IA avancée :** proposition non étayée écartée ; le bilan reste déterministe."
             except (KeyError, IndexError, TypeError, ValueError):
                 pass
-        return render(report, ai_note=ai_note, zone=self.llm.settings.display_timezone), report
+        return render(report, ai_note=ai_note, zone=self.llm.settings.display_timezone, language=lang)
 
     async def observation(self):
         snapshot = await self.cluster_status.status()

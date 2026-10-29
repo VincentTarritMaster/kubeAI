@@ -6,12 +6,14 @@ import re
 import unicodedata
 
 from app.clients.base import UpstreamError
-from app.services.incident_timeline import HELP, application_cpu_episode, collect, resolve_request, stamp
+from app.services.incident_timeline import (HELP, application_cpu_episode, collect, resolve_request, stamp,
+                                             _english_observation)
 from app.services.presentation import (DEFAULT_ZONE, date_label, day_heading, local_time,
                                        missing_summary, offset_label, readable_observation, short_time,
                                        technical_details)
 
 ALIGN_SECONDS = 300
+METRIC_SIGNAL_IDS = {"demo_app_cpu", "demo_http_errors", "demo_cpu_activity"}
 
 
 def correlation_question(chat):
@@ -283,7 +285,77 @@ def assess(report, metrics):
     return report
 
 
-def render(report, model_note, *, zone=DEFAULT_ZONE):
+def _english_description(hypothesis):
+    descriptions = {
+        "demo_http_errors": "HTTP 5xx errors increased during the anomaly window signaled in Loki.",
+        "demo_app_cpu": "Process CPU time increased during the anomaly window signaled in Loki.",
+        "connectivity": "A connection failure is possible during the interval, with associated HTTP 5xx errors.",
+        "demo_cpu_activity": "CPU activity increased around the demonstration marker.",
+        "process_cpu_near_limit": "Process CPU approached its configured limit; saturation or throttling remains unproven.",
+        "cpu_latency": "CPU contention may be associated with the measured HTTP latency increase.",
+        "memory_oom": "Memory pressure is compatible with an OOM event and a restart increase.",
+    }
+    return descriptions.get(hypothesis.get("id"), "Computed hypothesis from the available evidence.")
+
+
+def render_english(report, model_note, *, zone=DEFAULT_ZONE):
+    resource = f"{report['namespace']}/{report['pod']}"
+    all_hypotheses = report.get("hypotheses", [])
+    hypotheses = [item for item in all_hypotheses if item.get("id") not in METRIC_SIGNAL_IDS]
+    signals = [item for item in all_hypotheses if item.get("id") in METRIC_SIGNAL_IDS]
+    lines = ["## Incident correlation", "",
+             f"**Resource:** `{resource}`.",
+             f"**Window:** {report['start']} → {report['end']}.",
+             "", "**Observed facts**",
+             "- Source observations are listed below with their timestamps and references.",
+             "- Temporal correlation is not proof of causality."]
+    if hypotheses:
+        lines += ["", "**Causal hypotheses ranked by deterministic plausibility**"]
+        for index, item in enumerate(hypotheses, 1):
+            confidence = (item.get("confidence") or "").lower()
+            plausibility = ("high" if "étayée par plusieurs" in confidence or "log et erreurs" in confidence
+                            else "medium" if "limitée" in confidence else "low")
+            lines += [f"{index}. **{_english_description(item)}**",
+                      f"   - Plausibility: **{plausibility}**.",
+                      f"   - Confidence: {item.get('confidence') or 'unknown'}."]
+            evidence = item.get("supporting_observations", [])[:4]
+            for proof in evidence:
+                lines.append(f"   - Evidence: `{proof['timestamp']}` — {_english_observation(proof['observation'])}")
+            checks = item.get("recommended_checks", [])[:2]
+            for check in checks:
+                lines.append("   - Check: inspect the corresponding source evidence and metric window "
+                             "in the technical details (read-only).")
+        lines += ["", "**Interpretation**",
+                  "The facts above are deterministic. The hypotheses are not confirmed causes; "
+                  "the listed checks remain necessary."]
+    else:
+        lines += ["", "**Causal hypotheses**",
+                  "No secondary causal hypothesis is sufficiently supported by the available evidence."]
+    if signals:
+        lines += ["", "**Observed signals (not causal hypotheses)**"]
+        for item in signals:
+            proof = item.get("supporting_observations", [None])[0]
+            evidence = (f" Evidence: `{proof['timestamp']}` — {_english_observation(proof['observation'])}"
+                        if proof else "")
+            lines.append(f"- `{item['id']}`: {_english_description(item)}.{evidence}")
+    if report.get("correlation_limits"):
+        lines += ["", "**Missing evidence**",
+                  "- Some correlation limits remain; the exact evidence gaps are listed in technical details."]
+    if report.get("warnings"):
+        lines += ["", "**Source warnings**",
+                  "- One or more sources reported incomplete data; no missing value is invented."]
+    lines += ["", technical_details(title="Technical details / Evidence", lines=[
+        f"UTC window: {report['start']} → {report['end']}",
+        f"Data status: {report['data_status']}",
+        f"Timeline entries: {len(report.get('timeline', []))}",
+        "Deterministic report: Mistral did not modify these facts or hypotheses.",
+    ])]
+    return "\n".join(lines)
+
+
+def render(report, model_note, *, zone=DEFAULT_ZONE, language="fr"):
+    if language == "en":
+        return render_english(report, model_note, zone=zone)
     resource = f"{report['namespace']}/{report['pod']}"
     primary = report["hypotheses"][0] if report["hypotheses"] else None
     http_hypothesis = next((h for h in report["hypotheses"] if h["id"] == "demo_http_errors"), None)
@@ -329,6 +401,14 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
         label = short_time(value, zone)
         return label + (f" ({offset_label(local)})" if len(day_offsets[local.date()]) > 1 else "")
 
+    def plausibility(hypothesis):
+        confidence = (hypothesis.get("confidence") or "").lower()
+        if "étayée par plusieurs" in confidence or "log et erreurs" in confidence:
+            return "élevée"
+        if "limitée" in confidence or "mesures mimir" in confidence:
+            return "moyenne"
+        return "faible"
+
     period = (f"de {clock(report['start'])} à {clock(report['end'])}"
               if start_local.date() == end_local.date() else
               f"du {date_label(start_local)} à {clock(report['start'])} "
@@ -363,6 +443,7 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
         lines += ["", "**Corrélation :** " + relation,
                   "Les sources coïncident dans la fenêtre examinée ; cette proximité ne démontre pas la cause.",
                   "", f"**Hypothèse principale :** {hypothesis}",
+                  f"**Plausibilité (règle déterministe) :** {plausibility(primary)}.",
                   f"**Niveau de confiance :** {primary['confidence']}.",
                   "**Justification :** les observations datées ci-dessous proviennent des sources indiquées ; "
                   "elles ne confirment pas à elles seules la cause racine."]
@@ -406,22 +487,29 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
             lines.append("- Comparer le CPU du processus, la limite du conteneur et les métriques de throttling sur la même fenêtre.")
     if any("process_cpu_seconds_total" in limit for limit in report["correlation_limits"]):
         lines += ["", "La mesure CPU du processus ne permet pas d'affirmer une saturation ou un throttling du conteneur."]
-    others = report["hypotheses"][1:]
+    others = [item for item in report["hypotheses"][1:] if item["id"] not in METRIC_SIGNAL_IDS]
+    signals = [item for item in report["hypotheses"] if item["id"] in METRIC_SIGNAL_IDS]
     if others:
         lines += ["", "**Autres hypothèses calculées :**"]
         for item in others:
             proofs = item["supporting_observations"]
-            if item["id"] == "demo_http_errors":
-                proof = next((p for p in proofs if "http_error_ratio" in p["reference"]),
-                             proofs[0] if proofs else None)
-            elif item["id"] == "connectivity":
+            if item["id"] == "connectivity":
                 proof = next((p for p in proofs if "connection refused" in p["observation"].lower()),
                              proofs[0] if proofs else None)
             else:
                 proof = proofs[0] if proofs else None
             evidence = f" Preuve : {readable_observation(proof)}" if proof else ""
             lines.append(f"- `{item['id']}` : {item['description']} "
-                         f"(confiance : {item['confidence']}).{evidence}")
+                         f"(plausibilité : {plausibility(item)} ; confiance : {item['confidence']}).{evidence}")
+    elif report["hypotheses"]:
+        lines += ["", "**Autres hypothèses causales :** aucune hypothèse secondaire "
+                      "suffisamment étayée n'est disponible."]
+    if signals:
+        lines += ["", "**Signaux observés (non causaux, ne sont pas des hypothèses) :**"]
+        for item in signals:
+            proof = item["supporting_observations"][0] if item["supporting_observations"] else None
+            evidence = f" Preuve : {readable_observation(proof)}" if proof else ""
+            lines.append(f"- `{item['id']}` : {item['description']}.{evidence}")
     if report["missing"] or report["correlation_limits"]:
         lines += ["", "**Données manquantes :** " + missing_summary(
             report["missing"] + report["correlation_limits"], limit=2) + "."]
@@ -444,7 +532,7 @@ def render(report, model_note, *, zone=DEFAULT_ZONE):
     return "\n".join(lines)
 
 
-async def correlate(service, chat):
+async def correlate(service, chat, language="fr"):
     window, error, scanned = await resolve_request(service, chat)
     if error or not window["namespace"] or not window["pod"]:
         message = error or ("Précisez namespace et pod pour comparer des preuves de la même ressource. " + HELP)
@@ -487,4 +575,4 @@ async def correlate(service, chat):
                 model_note = f"Appel à {provider_name} échoué ({error.message}) ; diagnostic déterministe conservé."
         except (KeyError, IndexError, TypeError, ValueError):
             model_note = f"Réponse de {provider_name} rejetée : format ou priorité invalide. Diagnostic déterministe conservé."
-    return render(report, model_note, zone=service.llm.settings.display_timezone), report
+    return render(report, model_note, zone=service.llm.settings.display_timezone, language=language), report

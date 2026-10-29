@@ -12,6 +12,8 @@ resources:
   - ../../../open-webui-storage.yaml
   - ../../../open-webui.yaml
   - observability-proxy.yaml
+  - caddy.yaml
+  - webui-edge.yaml
 configMapGenerator:
   - name: mimir-config
     files:
@@ -26,6 +28,17 @@ configMapGenerator:
   - name: observability-proxy-config
     files:
       - nginx.conf=nginx.conf
+    options:
+      disableNameSuffixHash: true
+  - name: caddy-config
+    files:
+      - Caddyfile=Caddyfile
+    options:
+      disableNameSuffixHash: true
+  - name: webui-edge-config
+    files:
+      - webui-edge.conf=webui-edge.conf
+      - kubeai-ui.js=kubeai-ui.js
     options:
       disableNameSuffixHash: true
 patches:
@@ -74,6 +87,8 @@ patches:
         OBSERVED_CLUSTER: kubeai-observed
         KUBERNETES_NAMESPACE: applications
         KUBEAI_TOOL_PROTOCOL: json
+        KUBEAI_RATE_LIMIT_PER_MINUTE: "30"
+        KUBEAI_RATE_LIMIT_BURST: "10"
         MIMIR_URL: http://mimir.kubeai.svc:9009/prometheus
         LOKI_URL: http://loki.kubeai.svc:3100
   - target:
@@ -112,6 +127,8 @@ patches:
             containers:
               - name: open-webui
                 env:
+                  - name: WEBUI_URL
+                    value: "https://kubeai.anassndri.ch"
                   - name: WEBUI_AUTH
                     value: "True"
                   - name: ENABLE_SIGNUP
@@ -121,4 +138,4 @@ patches:
 images:
   - name: kubeai-agent
     newName: docker.io/anassndri/kubeai-agent
-    digest: "sha256:b6f94d36b1c04d59c814badc9a90c95ddbcb6856f4e22440db090c35d35be072"
+    digest: "sha256:4a1cf5272431310419487eb21cccdbbbb4fee64979435bc392ccf7e3880581d0"

@@ -124,13 +124,13 @@ def test_restarted_run_uses_its_own_measured_baseline_peak_and_recovery():
     assert any("app_cpu_cores" in proof["reference"] and "0.0800" in proof["observation"] for proof in proofs)
     text = render(report, "Analyse déterministe.")
     assert "Cycle retenu à 20:28:39" in text
-    assert "2026-10-19T18:28:39Z" in text.split("<details>", 1)[1]
+    assert "2026-10-19T18:28:39Z" in text.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[1]
     correlation = render_correlation(result, "Analyse déterministe.")
-    visible = correlation.split("<details>", 1)[0]
+    visible = correlation.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[0]
     assert "**19 octobre 2026 · Heure suisse (UTC+2)**" in visible
     assert "Problème observé :** anomalie signalée dans les logs Loki à 20:28:39" in visible
     assert "2026-10-19T18:28:39Z" not in visible
-    assert "2026-10-19T18:28:39Z" in correlation.split("<details>", 1)[1]
+    assert "2026-10-19T18:28:39Z" in correlation.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[1]
     assert "throttling" in visible and "lien causal reste à vérifier" in visible
     assert "0,0020 → 0,0800 cœur" in text
     assert any("app_cpu_cores" in proof["reference"] and "0.0020" in proof["observation"]

@@ -13,6 +13,7 @@ from app.clients.base import UpstreamError
 from app.services.llm_service import _unique_json_object
 from app.services.observability_tools import ObservabilityTools, bounded_result
 from app.services.privacy import redact_text
+from app.services.user_errors import language_of
 
 PROMPT = (Path(__file__).resolve().parents[1] / "prompts/tool_agent.txt").read_text()
 logger = logging.getLogger("uvicorn.error")
@@ -124,6 +125,40 @@ class ToolAgent:
                     "ask a narrower question.",
                 )
 
+    def source_warning(self, trace, question):
+        """Append an explicit partial-data note only when a source actually failed."""
+        failed = {
+            (entry.get("result") or {}).get("source")
+            for entry in trace
+            if (entry.get("result") or {}).get("error")
+        }
+        for entry in trace:
+            sources = (entry.get("result") or {}).get("sources")
+            if isinstance(sources, dict):
+                for name, status in sources.items():
+                    if isinstance(status, dict) and status.get("status") == "unavailable":
+                        failed.add(name)
+            metrics = (entry.get("result") or {}).get("metrics")
+            if isinstance(metrics, dict) and metrics.get("error"):
+                failed.add("mimir")
+        failed.discard(None)
+        if not failed:
+            return ""
+        lang = language_of(question)
+        labels = {
+            "mimir": ("les métriques Mimir", "Mimir metrics"),
+            "loki": ("les journaux Loki", "Loki logs"),
+            "kubernetes": ("l'API Kubernetes", "the Kubernetes API"),
+            "agent": ("le service de diagnostic", "the diagnosis service"),
+        }
+        if lang == "fr":
+            names = [labels.get(name, (name, name))[0] for name in sorted(failed)]
+            return ("\n\n---\n**Diagnostic partiel** : " + " et ".join(names) +
+                    " n'ont pas pu être consultés. Les conclusions ci-dessus ne portent que sur les sources disponibles.")
+        names = [labels.get(name, (name, name))[1] for name in sorted(failed)]
+        return ("\n\n---\n**Partial diagnosis**: " + " and ".join(names) +
+                " could not be read. The conclusions above only cover the available sources.")
+
     async def finalize(self, chat, trace):
         """Answer from already-collected evidence when the tool loop does not stop."""
         evidence = bounded_result({"tool_results": trace}, self.sensitive(), limit=12000)
@@ -139,7 +174,7 @@ class ToolAgent:
                 }, ensure_ascii=False)},
             ],
             "temperature": 0,
-            "max_tokens": min(1024, max(512, chat.max_tokens or chat.max_completion_tokens or 768)),
+            "max_tokens": min(4096, max(2048, chat.max_tokens or chat.max_completion_tokens or 2048)),
         }
         answer = await self.diagnosis.llm.complete(payload)
         try:
@@ -150,6 +185,7 @@ class ToolAgent:
             raise UpstreamError("agent", "Le fournisseur n'a pas produit de synthèse exploitable.")
         text = redact_text(text, self.sensitive())
         self.verify_claims(text, trace)
+        text += self.source_warning(trace, chat.messages[-1].content)
         return text, {"scope": "agent", "status": "answer",
                       "observed_at": datetime.now(timezone.utc).isoformat(),
                       "namespace": self.settings.namespace, "tools": trace}
@@ -164,7 +200,9 @@ class ToolAgent:
         clock = datetime.now(timezone.utc).isoformat()
         preface = (PROMPT + f"\nCurrent UTC time: {clock}. Display timezone: {self.settings.display_timezone}."
                    f"\nObserved cluster: {self.settings.observed_cluster or 'configured cluster'}."
-                   f" Collected application namespace: {self.settings.namespace}.")
+                   f" Collected application namespace: {self.settings.namespace}."
+                   f"\nLatest question language: {'English' if language_of(chat.messages[-1].content) == 'en' else 'French'}."
+                   " Reply exclusively in that language; keep Kubernetes names, metric names and identifiers unchanged.")
         messages = [{"role": "system", "content": preface}]
         current = max(i for i, message in enumerate(chat.messages) if message.role == "user")
         for message in chat.messages[max(0, current - 6):current + 1]:
@@ -186,12 +224,12 @@ class ToolAgent:
             payload = {
                 "messages": messages, "tools": self.tools.schemas, "tool_choice": "required",
                 "parallel_tool_calls": False, "temperature": 0,
-                "max_tokens": min(1024, max(512, chat.max_tokens or chat.max_completion_tokens or 768)),
+                "max_tokens": min(4096, max(2048, chat.max_tokens or chat.max_completion_tokens or 2048)),
             }
             try:
                 decision = await self.diagnosis.llm.tool_completion(payload)
             except UpstreamError as error:
-                if error.source != "llm" or "appel d'outil valide" not in error.message:
+                if error.source != "llm" or not any(marker in error.message.lower() for marker in ("appel d'outil valide", "structured function call", "tool call", "tool-call")):
                     raise
                 logger.warning("Malformed tool-call response; retrying once")
                 messages.append({"role": "user", "content":
@@ -242,6 +280,7 @@ class ToolAgent:
                             self.verify_claims(answer, trace)
                         if windows and arguments["kind"] == "answer":
                             answer += "\n\n---\n" + "\n".join(windows[-3:])
+                        answer += self.source_warning(trace, chat.messages[-1].content)
                         return answer, {"scope": "agent", "status": arguments["kind"], "observed_at": clock,
                                         "namespace": self.settings.namespace, "tools": trace}
                     self.verify_window(name, arguments, chat)

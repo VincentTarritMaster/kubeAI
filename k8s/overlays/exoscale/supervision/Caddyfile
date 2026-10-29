@@ -1,0 +1,21 @@
+{
+	admin off
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+kubeai.anassndri.ch {
+	encode zstd gzip
+	reverse_proxy http://webui-edge.kubeai.svc.cluster.local:80 {
+		flush_interval -1
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	log {
+		output stdout
+		format console
+	}
+}

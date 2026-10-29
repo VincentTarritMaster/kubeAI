@@ -98,12 +98,15 @@ def cluster_pod_status(raw: dict) -> ClusterPodStatus:
               if item.reason and item.reason != "Completed"]
     if health == "unhealthy" and not issues:
         issues.append(_text(status.get("reason")) or f"Pod {phase}, Ready={str(ready).lower()}")
+    created = _timestamp(metadata.get("creationTimestamp"))
+    age_seconds = max(0, int((datetime.now(timezone.utc) - created).total_seconds())) if created else None
     return ClusterPodStatus(
         name=_text(metadata.get("name")) or "", namespace=_text(metadata.get("namespace")) or "",
         uid=_text(metadata.get("uid")), node=_text(spec.get("nodeName")), phase=phase,
         ready=ready, health=health,
         restarts=sum(restart_counts) if isinstance(status.get("containerStatuses"), list)
                  and all(count is not None for count in restart_counts) else None,
+        age_seconds=age_seconds,
         containers=containers, issues=[redact_text(issue)[:240] for issue in issues],
     )
 

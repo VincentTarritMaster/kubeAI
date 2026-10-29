@@ -90,14 +90,14 @@ def test_high_cpu_without_latency_or_limit_cannot_explain_nestjs_slowness():
     assert result["conclusion"] == "cause indéterminée"
     assert any("latence HTTP NestJS" in text for text in result["correlation_limits"])
     assert any("aucune saturation CPU" in text for text in result["correlation_limits"])
-    visible = render(result, "Analyse déterministe.").split("<details>", 1)[0]
+    visible = render(result, "Analyse déterministe.").split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[0]
     assert "**Preuves principales :**" in visible
     assert "Mimir" in visible and "cause indéterminée" in visible
 
 
 def test_process_cpu_near_limit_requests_read_only_throttling_check_without_claiming_cause():
     result = assess_points([point("app_cpu_cores", 150, 0.09), point("cpu_limit_cores", 150, 0.1)])
-    visible = render(result, "Analyse déterministe.").split("<details>", 1)[0]
+    visible = render(result, "Analyse déterministe.").split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[0]
     hypothesis = next(item for item in result["hypotheses"] if item["id"] == "process_cpu_near_limit")
     assert result["process_near_limit"] is True
     assert result["conclusion"] == "hypothèses non confirmées"
@@ -108,7 +108,7 @@ def test_process_cpu_near_limit_requests_read_only_throttling_check_without_clai
     assert "vérifier une éventuelle saturation ou un throttling" in visible
     assert "**19 octobre 2026 · Heure suisse (UTC+2)**" in visible
     assert "2026-10-19T12:02:30Z" not in visible
-    assert "query_range" in render(result, "Analyse déterministe.").split("<details>", 1)[1]
+    assert "query_range" in render(result, "Analyse déterministe.").split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[1]
 
 
 def test_connection_error_log_alone_has_insufficient_evidence():

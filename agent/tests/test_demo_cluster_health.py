@@ -123,7 +123,7 @@ def test_healthy_cluster_uses_all_namespaces_mimir_and_no_paid_call_without_key(
     assert "2/2 Ready (0 NotReady)" in text
     assert "2/2 Running (0 en erreur)" in text
     assert "0.750 cœur(s)" in text and "100.0 Mio" in text
-    assert "Analyse IA avancée :** indisponible" in text
+    assert "Règles déterministes :" in text
     assert calls["kubernetes"] == ["/api/v1/nodes", "/api/v1/pods", "/api/v1/events"]
     assert len(calls["mimir"]) == 2 and calls["llm"] == []
     assert "namespace `kubeai`" not in text
@@ -254,7 +254,8 @@ def test_recent_warning_is_evidence_but_old_warning_is_not():
         text = answer(chat(api))
     assert "**État global : opérationnel avec avertissements récents**" in text
     assert "FailedScheduling" in text
-    assert "OldEvent" not in text
+    assert "OldEvent" in text
+    assert "historique" in text.lower()
     assert "sensitive-value" not in text
 
 
@@ -266,7 +267,7 @@ def test_recent_unhealthy_probe_on_ready_pod_is_warning_not_outage(probe):
                          mimir_empty=True)
     with api:
         text = answer(chat(api))
-    visible, technical = text.split("<details>", 1)
+    visible, technical = text.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)
     assert "**État global : opérationnel avec avertissements récents et supervision partielle**" in visible
     assert "1/1 Ready" in visible and "1/1 Running" in visible
     assert f"sonde {probe}" in visible and "Ready" in visible
@@ -287,7 +288,7 @@ def test_reported_14_running_pods_restarts_two_unhealthy_events_and_missing_metr
     api, _ = make_client(pods=pods, events=events, mimir_empty=True)
     with api:
         text = answer(chat(api))
-    visible = text.split("<details>", 1)[0]
+    visible = text.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[0]
     assert "**État global : opérationnel avec avertissements récents et supervision partielle**" in visible
     assert "1/1 Ready" in visible and "14/14 Running" in visible
     assert "11 conteneur(s)" in visible and "Avertissements récents : 2" in visible
@@ -339,8 +340,8 @@ def test_probe_message_stays_in_local_evidence_and_out_of_mistral_selection():
     with api:
         text = answer(chat(api))
     assert calls["llm"] == ["/v1/chat/completions"]
-    assert "PRIVATE-APP-DATA" not in text.split("<details>", 1)[0]
-    assert "PRIVATE-APP-DATA" in text.split("<details>", 1)[1]
+    assert "PRIVATE-APP-DATA" not in text.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[0]
+    assert "PRIVATE-APP-DATA" in text.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[1]
 
 
 def test_partial_and_contradictory_node_pod_data_cannot_be_called_healthy():
@@ -358,7 +359,7 @@ def test_mistral_failure_returns_deterministic_answer():
     with api:
         text = answer(chat(api))
     assert "**État global : dégradé**" in text
-    assert "Analyse IA avancée :** indisponible" in text
+    assert "Règles déterministes :" in text
     assert calls["llm"] == ["/v1/chat/completions"]
 
 

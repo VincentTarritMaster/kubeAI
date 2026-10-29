@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import logging
 import time
 import uuid
 
@@ -22,6 +23,7 @@ from app.services.cluster_status import ClusterStatusService
 from app.services.diagnosis import DiagnosisService
 from app.services.llm_service import LLMService
 from app.services.limits import RateLimiter
+from app.services.user_errors import new_diagnostic_id, user_error
 
 
 def create_app(settings: Settings | None = None, *, kubernetes_transport=None, prometheus_transport=None,
@@ -62,8 +64,16 @@ def create_app(settings: Settings | None = None, *, kubernetes_transport=None, p
 
     @application.exception_handler(UpstreamError)
     async def upstream_error(request: Request, error: UpstreamError):
+        diagnostic_id = new_diagnostic_id()
+        info = user_error(error, "", diagnostic_id)
+        logging.getLogger("uvicorn.error").error(
+            "diagnostic_id=%s code=%s component=%s source_error=%s",
+            info["diagnostic_id"], info["code"], info["component"], info["source_message"],
+        )
         return JSONResponse(status_code=503, content={"detail": {
-            "source": error.source, "message": error.message,
+            "code": info["code"], "message": info["message"], "source": info["source"],
+            "diagnostic_id": info["diagnostic_id"], "component": info["component"],
+            "complete": False, "retryable": info["retryable"],
         }})
 
     @application.exception_handler(RequestValidationError)

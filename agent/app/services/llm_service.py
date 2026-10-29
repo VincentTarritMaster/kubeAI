@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import uuid
 from collections.abc import Sequence
@@ -10,10 +11,11 @@ from langchain_core.runnables import RunnableLambda
 
 from app.clients.base import UpstreamError
 from app.config import Settings
-from app.services.privacy import redact_data
+from app.services.privacy import redact_data, redact_text
 
 
 LANGCHAIN_FRAMEWORK = "langchain"
+logger = logging.getLogger("uvicorn.error")
 
 
 def _unique_json_object(pairs):
@@ -24,6 +26,33 @@ def _unique_json_object(pairs):
             raise ValueError("Duplicate JSON key")
         result[key] = value
     return result
+
+
+def parse_action_content(content):
+    """Parse one JSON action, tolerating a markdown fence or surrounding prose.
+
+    The provider still has to return an object with exactly the expected keys;
+    tolerance here is only about transport wrapping, never about guessing a tool
+    name or arguments.
+    """
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Empty action content")
+    text = content.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    candidates = [fenced.group(1)] if fenced else []
+    candidates.append(text)
+    first, last = text.find("{"), text.rfind("}")
+    if first >= 0 and last > first:
+        candidates.append(text[first:last + 1])
+    last_error = None
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate, object_pairs_hook=_unique_json_object)
+            if isinstance(value, dict):
+                return value
+        except (TypeError, ValueError, RecursionError) as error:
+            last_error = error
+    raise ValueError("Invalid action JSON") from last_error
 
 
 class LLMService:
@@ -183,12 +212,16 @@ class LLMService:
             "max_tokens": payload["max_tokens"], "response_format": {"type": "json_schema",
                 "json_schema": {"name": "observability_action", "strict": True, "schema": schema}},
         })
+        finish_reason = None
+        content = None
         try:
             body = json.loads(await response.aread(), object_pairs_hook=_unique_json_object)
             choice = body["choices"][0]
-            if choice.get("finish_reason") == "length":
+            finish_reason = choice.get("finish_reason")
+            content = (choice.get("message") or {}).get("content")
+            if finish_reason == "length":
                 raise ValueError("Truncated action")
-            action = json.loads(choice["message"]["content"], object_pairs_hook=_unique_json_object)
+            action = parse_action_content(content)
             if (not isinstance(action, dict) or set(action) != {"name", "arguments"}
                     or action["name"] not in {tool["name"] for tool in definitions}
                     or not isinstance(action["arguments"], dict)):
@@ -197,6 +230,12 @@ class LLMService:
                     "type": "function", "function": {"name": action["name"],
                     "arguments": json.dumps(action["arguments"], ensure_ascii=False)}}]}
         except (KeyError, IndexError, TypeError, ValueError, RecursionError) as error:
+            tail = redact_text(content[-160:]) if isinstance(content, str) and content else ""
+            logger.warning(
+                "Structured tool call invalid: %s finish_reason=%s content_length=%s tail=%r",
+                type(error).__name__, finish_reason,
+                len(content) if isinstance(content, str) else None, tail,
+            )
             raise UpstreamError("llm", "Invalid or incomplete structured function call") from error
         except httpx.TimeoutException as error:
             raise UpstreamError("llm", "Structured function call timed out") from error

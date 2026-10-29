@@ -342,13 +342,13 @@ def test_incident_json_and_streaming_preserve_the_same_markdown_breaks():
     with api:
         normal = body(ask(api))
         streamed = sse_body(ask(api, stream=True))
-    visible, details = normal.split("<details>", 1)
-    streamed_visible, streamed_details = streamed.split("<details>", 1)
+    visible, details = normal.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)
+    streamed_visible, streamed_details = streamed.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)
     assert streamed_visible == visible
     assert "query_range" in details and "query_range" in streamed_details
     assert "**<br>\n\n   " in visible
     assert "## Chronologie de l'incident" in visible
-    assert "2026-10-19T12:00:10Z" in normal.split("<details>", 1)[1]
+    assert "2026-10-19T12:00:10Z" in normal.split("KUBEAI_TECHNICAL_DETAILS|Détails techniques / Preuves", 1)[1]
 
 
 def test_incident_timeline_contains_real_source_entries_only():
