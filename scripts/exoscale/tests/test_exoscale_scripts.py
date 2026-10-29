@@ -164,7 +164,7 @@ def test_overlays_have_mtls_and_private_nodeports():
         text=True, encoding="utf-8", errors="replace", timeout=60)
     assert observed.returncode == 0, observed.stderr
     assert "kubeai-alloy-mtls-client" in observed.stdout
-    assert "server_name = \"mimir.kubeai.svc\"" in observed.stdout
+    assert "server_name = \\\"mimir.kubeai.svc\\\"" in observed.stdout
     assert "https://CHANGE_ME_SUPERVISION_PRIVATE_IP:30009" in observed.stdout
 
     supervision = subprocess.run(
@@ -176,7 +176,7 @@ def test_overlays_have_mtls_and_private_nodeports():
     assert "kubeai-observability-mtls" in supervision.stdout
     assert "nodePort: 30009" in supervision.stdout
     assert "nodePort: 30310" in supervision.stdout
-    assert "kubeai-agent@sha256:000" in supervision.stdout
+    assert "docker.io/anassndri/kubeai-agent@sha256:" in supervision.stdout
 
 
 def test_agent_rbac_has_no_secret_or_write_access():

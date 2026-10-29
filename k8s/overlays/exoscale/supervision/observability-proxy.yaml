@@ -25,7 +25,6 @@ spec:
       containers:
         - name: nginx
           image: nginxinc/nginx-unprivileged:1.27-alpine
-          args: ["-g", "daemon off;"]
           ports:
             - name: mimir-tls
               containerPort: 9443
@@ -44,17 +43,13 @@ spec:
             capabilities:
               drop: [ALL]
           readinessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: mimir-tls
-              scheme: HTTPS
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: mimir-tls
-              scheme: HTTPS
             periodSeconds: 20
             timeoutSeconds: 3
           volumeMounts:

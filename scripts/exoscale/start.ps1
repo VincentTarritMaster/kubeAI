@@ -48,7 +48,15 @@ foreach ($item in $plan) {
             --zone $script:Config.zone --size 1 --instance-type $item.NodeType `
             --disk-size ([string]$item.DiskSizeGb) --private-network $script:Config.privateNetwork `
             --security-group $script:Config.securityGroup --label "kubeai.io/role=$($item.Role)"
-        if ($LASTEXITCODE -ne 0) { throw "Création du Nodepool impossible pour $($item.Name)/$($item.NodePool)." }
+        if ($LASTEXITCODE -ne 0) {
+            Start-Sleep -Seconds 5
+            $createdPools = @(Get-ExoNodePools -Cluster $item.Name)
+            $created = $createdPools | Where-Object { $_.name -eq $item.NodePool } | Select-Object -First 1
+            if ($null -eq $created -or [int]$created.size -lt 1) {
+                throw "Création du Nodepool impossible pour $($item.Name)/$($item.NodePool)."
+            }
+            Write-Warning "La CLI a retourné une erreur après création, mais le Nodepool $($item.Name)/$($item.NodePool) existe à $($created.size) nœud."
+        }
     } elseif ([int]$pool.size -eq 0) {
         Write-Host "Scale up $($item.Name)/$($item.NodePool) : 0 -> 1"
         & exo compute sks nodepool scale $item.Name $item.NodePool 1 -f --zone $script:Config.zone
@@ -91,7 +99,16 @@ if (-not $SkipTokenRefresh) {
     }
 }
 
-$supervisionIp = (& kubectl --context 'kubeai-supervision' get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>$null).Trim()
+$supervisionNode = & kubectl --context 'kubeai-supervision' get nodes -o json 2>$null | ConvertFrom-Json
+$supervisionIp = $null
+if ($null -ne $supervisionNode -and @($supervisionNode.items).Count -gt 0) {
+    $interfaces = $supervisionNode.items[0].metadata.annotations.'projectcalico.org/Interfaces'
+    if ($interfaces -match '"name":"eth1","addresses":\["([^"]+)"\]') { $supervisionIp = $matches[1] }
+    if (-not $supervisionIp) {
+        $supervisionIp = $supervisionNode.items[0].status.addresses |
+            Where-Object { $_.type -eq 'InternalIP' } | Select-Object -First 1 -ExpandProperty address
+    }
+}
 if ($LASTEXITCODE -eq 0 -and $supervisionIp) {
     $exists = & kubectl --context 'kubeai-observed' -n collecte get configmap kubeai-collector-targets -o name 2>$null
     if ($LASTEXITCODE -eq 0 -and $exists) {

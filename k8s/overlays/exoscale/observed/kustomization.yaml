@@ -57,3 +57,39 @@ patches:
                   - name: mtls
                     mountPath: /etc/alloy/mtls
                     readOnly: true
+  - target:
+      kind: ClusterRoleBinding
+      name: kubeai-alloy-pod-logs
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: kubeai-alloy-pod-logs
+      subjects:
+        - kind: ServiceAccount
+          name: alloy
+          namespace: collecte
+  - target:
+      kind: ClusterRoleBinding
+      name: kubeai-alloy-cadvisor
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: kubeai-alloy-cadvisor
+      subjects:
+        - kind: ServiceAccount
+          name: alloy
+          namespace: collecte
+  - target:
+      kind: ClusterRoleBinding
+      name: kubeai-monitoring-kube-state-metrics
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: kubeai-monitoring-kube-state-metrics
+      subjects:
+        - kind: ServiceAccount
+          name: kube-state-metrics
+          namespace: collecte

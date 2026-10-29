@@ -73,6 +73,7 @@ patches:
         KUBERNETES_KUBECONFIG_FILE: /var/run/secrets/kubeai-observed/kubeconfig
         OBSERVED_CLUSTER: kubeai-observed
         KUBERNETES_NAMESPACE: applications
+        KUBEAI_TOOL_PROTOCOL: json
         MIMIR_URL: http://mimir.kubeai.svc:9009/prometheus
         LOKI_URL: http://loki.kubeai.svc:3100
   - target:
@@ -86,8 +87,6 @@ patches:
       spec:
         template:
           spec:
-            imagePullSecrets:
-              - name: kubeai-registry
             volumes:
               - name: watched-kubeconfig
                 secret:
@@ -113,9 +112,13 @@ patches:
             containers:
               - name: open-webui
                 env:
+                  - name: WEBUI_AUTH
+                    value: "True"
                   - name: ENABLE_SIGNUP
                     value: "False"
+                  - name: DEFAULT_USER_ROLE
+                    value: user
 images:
   - name: kubeai-agent
-    newName: registry.example.invalid/kubeai-agent
-    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    newName: docker.io/anassndri/kubeai-agent
+    digest: "sha256:b6f94d36b1c04d59c814badc9a90c95ddbcb6856f4e22440db090c35d35be072"

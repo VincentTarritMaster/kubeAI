@@ -1,0 +1,7 @@
+Open WebUI
+- URL locale : http://127.0.0.1:18080
+- GET / : 200
+- API /api/config : auth=true, signup=false
+- Login local : fichier %USERPROFILE%\\.kube\\kubeai-webui-credentials.json (hors Git)
+- /api/models : kubeai
+- /api/chat/completions : HTTP 200

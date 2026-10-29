@@ -1,0 +1,5 @@
+Proxy mTLS
+- Sans certificat client : HTTP 400
+- Avec certificat client : handshake TLS valide (OpenSSL verify OK)
+- Alloy : POST Mimir 200 et Loki 204 dans les logs proxy
+NodePort public test: 151.145.199.74:30009 closed; :30310 closed.

@@ -1,0 +1,39 @@
+KubeAI Exoscale - cluster state - 2026-10-29
+=== observed nodes ===
+NAME               STATUS   ROLES    AGE   VERSION   INTERNAL-IP      EXTERNAL-IP      OS-IMAGE             KERNEL-VERSION             CONTAINER-RUNTIME
+pool-11a2f-fgxbr   Ready    <none>   61m   v1.37.1   151.145.198.38   151.145.198.38   Ubuntu 26.04.1 LTS   7.0.0-38-generic (amd64)   containerd://2.4.2
+
+=== observed pods ===
+NAMESPACE      NAME                                       READY   STATUS      RESTARTS   AGE
+applications   kubeai-demo-incident                       0/1     Completed   0          20m
+collecte       alloy-5d97cfbbb-fl6rz                      1/1     Running     0          25m
+collecte       kube-state-metrics-6f876f6c49-cbdzg        1/1     Running     0          26m
+kube-system    calico-kube-controllers-5c745bff95-f2sxb   1/1     Running     0          11h
+kube-system    calico-node-x2mx4                          1/1     Running     0          61m
+kube-system    coredns-59b68cf889-8gpvz                   0/1     Pending     0          44s
+kube-system    coredns-59b68cf889-wrk4d                   1/1     Running     0          11h
+kube-system    exoscale-csi-controller-89fd9b4-4llbb      7/7     Running     0          11h
+kube-system    exoscale-csi-controller-89fd9b4-mwn77      7/7     Running     0          11h
+kube-system    exoscale-csi-node-2ffsl                    3/3     Running     0          61m
+kube-system    konnectivity-agent-fb8659fb8-2rc8x         0/1     Pending     0          44s
+kube-system    konnectivity-agent-fb8659fb8-62m8f         1/1     Running     0          11h
+kube-system    kube-proxy-rxvpt                           1/1     Running     0          61m
+kube-system    metrics-server-685d776bf9-mxff7            1/1     Running     0          11h
+
+=== supervision nodes ===
+NAME               STATUS   ROLES    AGE   VERSION   INTERNAL-IP      EXTERNAL-IP      OS-IMAGE             KERNEL-VERSION             CONTAINER-RUNTIME
+pool-e7b11-rtnnh   Ready    <none>   59m   v1.37.1   151.145.199.74   151.145.199.74   Ubuntu 26.04.1 LTS   7.0.0-38-generic (amd64)   containerd://2.4.2
+
+=== supervision pods/pvc ===
+NAME                                       READY   STATUS    RESTARTS   AGE
+pod/kubeai-agent-77c9fbffb8-8q2xt          1/1     Running   0          11m
+pod/loki-575446fdcf-pplfc                  1/1     Running   0          31m
+pod/mimir-69878db5f4-l4v46                 1/1     Running   0          31m
+pod/observability-proxy-86f7494588-796q5   1/1     Running   0          29m
+pod/open-webui-6d45567977-4rkdr            1/1     Running   0          5m18s
+
+NAME                                    STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/loki-data         Bound    pvc-7ac08f98-d9c5-44ad-b0cb-97ed85c2f479   2Gi        RWO            exoscale-sbs   <unset>                 31m
+persistentvolumeclaim/mimir-data        Bound    pvc-115852ca-ca0f-438f-b42c-196ec22f8b70   10Gi       RWO            exoscale-sbs   <unset>                 31m
+persistentvolumeclaim/open-webui-data   Bound    pvc-1760988c-db3a-4459-ac1a-050b08dc0cde   1Gi        RWO            exoscale-sbs   <unset>                 31m
+
