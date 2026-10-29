@@ -1,228 +1,244 @@
 # P5-G17 | KubeAI
 
-Projet collectif des **3 étudiants** du groupe P5-G17 : un assistant d'observabilité
-Kubernetes qui répond à des questions de santé et d'incident à partir de
-preuves datées. Le modèle technique exposé à Open WebUI est `kubeai`. Le backend
-combine **FastAPI** et des outils **LangChain Core** : le modèle comprend la
-conversation, choisit ses fonctions de lecture et rédige une réponse fondée sur
-leurs résultats, dans la langue de la question.
+KubeAI est un assistant d'observabilité Kubernetes développé par le groupe
+**P5-G17**. Il répond en français ou en anglais à des questions de santé, de
+chronologie et de corrélation à partir de preuves datées provenant de
+Kubernetes, Mimir et Loki. Les faits sont calculés par du code déterministe ;
+le modèle ne peut ni inventer une ressource, ni modifier le cluster.
 
-## Démarrage — deux clusters séparés
+- Démonstration publique : <https://kubeai.anassndri.ch>
+- Modèle exposé dans Open WebUI : `kubeai`
+- Rapport d'audit final : [docs/exoscale/evidence/adversarial-test-report.md](docs/exoscale/evidence/adversarial-test-report.md)
 
-Prérequis : Docker Desktop ouvert, Minikube, kubectl et Python 3. Pour Apertus,
-préparer et démarrer le moteur sur le Mac selon [ce guide](llm/README.md).
-Copier `.env.example` vers `.env` si nécessaire, puis configurer son fournisseur
-et la topologie :
+## Architecture livrée
 
-```dotenv
-KUBEAI_SUPERVISION_CLUSTER=kubeai-supervision
-KUBEAI_OBSERVED_CLUSTER=kubeai-observed
-KUBERNETES_NAMESPACE=applications
-```
-
-Depuis la racine du dépôt sur Mac/Linux :
-
-```bash
-bash start.sh          # démarre les deux clusters et ouvre le tunnel WebUI
-bash start-failure.sh  # lance la démo CPU/HTTP du 19 octobre dans applications
-bash stop-failure.sh   # supprime les pods de démo et remet le cluster observé au propre
-```
-
-Sous Windows PowerShell, utiliser les commandes racine :
-
-```powershell
-.\start.ps1
-.\start-failure.ps1
-.\stop-failure.ps1
-.\stop.ps1             # ferme WebUI et arrête les deux clusters, sans supprimer les PVC
-```
-
-`scripts/start.ps1` et `scripts/stop.ps1` restent des alias des commandes
-racine pour les collègues qui utilisent l'ancien chemin.
-Apertus reste lancé séparément ; aucun modèle n'est téléchargé par `start`.
-
-Ouvrir <http://127.0.0.1:8080>, créer son compte si nécessaire et sélectionner
-le modèle **kubeai**. Après les quatre minutes du scénario, demander :
-
-> Analyse le dernier incident.
-
-Puis, dans le même chat :
-
-> Pour ce même incident, corrèle les logs, le CPU et les erreurs HTTP.
-
-Les formulations libres et l'anglais sont acceptés, par exemple
-« Could you investigate what went wrong most recently? ».
-Voir [le fonctionnement de l'agent et ses outils](docs/agent-tools.md).
-
-Le cluster observé contient les namespaces `applications` et `collecte` ; le
-cluster de supervision contient `kubeai` et `supervision`. Les logs et métriques
-portent le label du cluster observé et l'agent filtre ses lectures sur ce label.
-Le [graphique et les détails de la topologie](docs/two-clusters.md) expliquent
-la hiérarchie cluster → namespace → pod → conteneur et les connexions.
-
-Le premier lancement arrête l'ancien profil `minikube` s'il héberge l'ancienne
-pile kubeAI, pour libérer ses ressources. Il ne touche pas aux autres projets.
-Les nouveaux profils réservent 4 Gio et 2 Gio ; l'inférence Apertus s'ajoute sur
-le Mac. Le jeton de lecture expire après 24 heures et est renouvelé à chaque
-`start`. Les paramètres `.env` sont appliqués au démarrage ; les commandes de
-démo et de nettoyage utilisent la dernière topologie démarrée.
-
-## Architecture
-
-Deux flux se rejoignent dans le backend :
+Deux clusters SKS Exoscale séparés, dans `ch-gva-2` :
 
 ```text
-Kubernetes ──> Grafana Alloy ── métriques (KSM, cAdvisor, pods annotés) ──> Mimir (PromQL) ──┐
-                                  logs ─────────────────────────────────────> Loki (LogQL) ────┼──> FastAPI
-Kubernetes API (lecture seule : nœuds, pods, événements) ─────────────────────────────────────┘       │
-                                                                                                      ├──> Mistral API
-Open WebUI ── modèle virtuel kubeai ─────────────────────────────────────────────────────────────────┘     ou Apertus local
+kubeai-observed                         kubeai-supervision
+┌──────────────────────┐                ┌──────────────────────────────┐
+│ applications         │                │ supervision                  │
+│ collecte             │  mTLS privé    │ Alloy / Mimir / Loki         │
+│ Alloy                │ ─────────────▶ │ observability-proxy          │
+│ kubeai-agent (lecture)│                │ FastAPI kubeai-agent         │
+└──────────────────────┘                │ Open WebUI                   │
+                                        │ Caddy + webui-edge (HTTPS)   │
+                                        └──────────────────────────────┘
 ```
 
-| Bloc | Responsabilité |
+| Composant | Rôle |
 |---|---|
-| Kubernetes | Exécute la pile et les scénarios de démonstration. |
-| Alloy | Collecte les métriques de kube-state-metrics, de cAdvisor (via le proxy de l'API Kubernetes) et des pods annotés du namespace observé (`applications` par défaut), puis les logs de ce namespace. |
-| Mimir | Stocke les métriques et répond aux requêtes PromQL historiques. |
-| Loki | Stocke les logs consultés par LogQL. |
-| FastAPI | Exécute et valide les appels d'outils en lecture seule et expose l'API compatible OpenAI. |
-| LangChain Core | Décrit les outils et leurs arguments typés ; le modèle choisit les appels. |
-| Mistral API / Apertus local | Comprend la demande, choisit les fonctions nécessaires et synthétise leurs preuves. Le fournisseur doit prendre en charge les appels de fonctions ou le protocole JSON typé. |
-| Open WebUI | Interface conversationnelle authentifiée qui appelle FastAPI avec le modèle `kubeai`. |
+| **SKS `kubeai-observed`** | Charge applicative et collecte : namespaces `applications` et `collecte`. |
+| **SKS `kubeai-supervision`** | Mimir, Loki, Alloy, agent FastAPI, Open WebUI, Caddy. |
+| **Alloy** | Collecte les métriques et logs du cluster observé. |
+| **Mimir / Loki** | Stockage des métriques PromQL et des logs LogQL. |
+| **FastAPI `kubeai-agent`** | Outils Kubernetes/Mimir/Loki en lecture seule, règles de santé et rendu A/B/C. |
+| **Open WebUI** | Interface authentifiée ; `ENABLE_SIGNUP=false`. |
+| **Caddy + webui-edge** | HTTPS public, certificat Let's Encrypt, adaptation du bloc de preuves dépliable. |
+| **Mistral API** | Compréhension du chat générique et, éventuellement, sélection d'une priorité déjà calculée ; jamais une source de fait. |
 
-Les manifests actifs se trouvent dans [`k8s/`](k8s/). Les configurations
-spécifiques sont décrites dans [`docs/architecture.md`](docs/architecture.md),
-[`docs/architecture-llm-profiles.md`](docs/architecture-llm-profiles.md),
-[`docs/langchain.md`](docs/langchain.md),
-[`docs/mistral-api.md`](docs/mistral-api.md) et
-[`k8s/monitoring/README.md`](k8s/monitoring/README.md).
-Le document d'architecture initial fourni avec le sujet est archivé dans
-[`docs/archive/Group-17-Architecture-initiale.pdf`](docs/archive/Group-17-Architecture-initiale.pdf).
-Il décrit la conception de départ, pas l’état livré ; l’architecture actuelle
-est dans [`docs/architecture.md`](docs/architecture.md).
+Les détails d'architecture, de RBAC et de réseau sont dans
+[docs/two-clusters.md](docs/two-clusters.md),
+[docs/architecture.md](docs/architecture.md) et
+[docs/exoscale/deployment.md](docs/exoscale/deployment.md).
 
-## État du projet et démonstrations
+## Technologies
 
-La [validation du 27 octobre 2026](docs/validation-two-clusters-2026-10-27.md)
-confirme le démarrage des deux clusters sur Mac, la collecte distante, les deux
-questions B/C via Apertus et le nettoyage de la démo. Les **420 tests de l'agent**
-et les **20 tests scripts Python** passent ici ; 11 tests shell ne sont pas
-exécutables sous Windows. Les résultats suivants décrivent la validation
-historique sur Docker Desktop.
+- Python, FastAPI, Pydantic, httpx ;
+- LangChain Core pour le protocole d'outils ;
+- Open WebUI, Caddy, nginx (adaptateur UI) ;
+- Kubernetes SKS Exoscale, Kustomize, Grafana Alloy, Mimir, Loki ;
+- Mistral API, avec mode local Apertus documenté dans [llm/README.md](llm/README.md) ;
+- tests `pytest`, tests PowerShell/Kustomize et validations API publiques.
 
-L'équipe a validé les démonstrations A/B/C depuis Open WebUI sur le cluster
-Docker Desktop : santé globale, chronologie d'incident avec 52 à 80 observations
-historiques Mimir/Loki selon la fenêtre, puis corrélation entre les marqueurs de
-scénario et les métriques CPU/HTTP du pod applicatif. Consultez
-[`docs/demo-scenarios.md`](docs/demo-scenarios.md) pour les questions, preuves,
-limites et étapes de reproduction. Les **420 tests automatisés** passent ; les
-tests emploient des sources simulées et ne remplacent pas une validation du
-cluster. La page
-[`docs/metrics.md`](docs/metrics.md) détaille ce qui est réellement collecté ;
-la validation du 22 octobre est dans
-[`docs/validation-demo-http-2026-10-22.md`](docs/validation-demo-http-2026-10-22.md).
-L'évaluation consolidée, les limites et les objectifs non certifiés sont dans
-[`docs/evaluation.md`](docs/evaluation.md). Le benchmark FR/EN contrôlé obtient
-**30/30 faits** avec une latence maximale de **15,76 s**.
+## Démarrage Exoscale
 
-## Sécurité et limites
+Prérequis : `exo` configuré, `kubectl`, PowerShell 5.1+, Docker pour reconstruire
+l'image, et les kubeconfigs administrateur **hors dépôt**.
 
-- FastAPI lit les nœuds, pods et événements avec des permissions Kubernetes
-  limitées aux verbes de lecture nécessaires (`list`). Il n'accède pas aux
-  Secrets via l'API et ne modifie aucune ressource.
-- Alloy scrape cAdvisor via le proxy de l'API Kubernetes. Cela nécessite
-  `list/watch` sur les nœuds et `get` sur `nodes/proxy` pour son ServiceAccount :
-  ce droit élargit la surface RBAC par rapport à la version précédente ; le
-  scrape n'utilise toutefois que `/metrics/cadvisor`. Les métriques
-  CPU/mémoire des conteneurs sont donc collectées ; `/cluster/status` peut
-  renseigner `cpu_cores` et `memory_working_set_bytes`. Voir
-  [`docs/metrics.md`](docs/metrics.md) et
-  [`k8s/monitoring/rbac-cadvisor.yaml`](k8s/monitoring/rbac-cadvisor.yaml).
-- Les logs sont lus dans Loki ; les métriques proviennent de Mimir. Les séries
-  applicatives sont collectées par opt-in via annotations Prometheus dans
-  `kubeai`. Sans instrumentation, la latence HTTP et les erreurs applicatives
-  restent inconnues. Les traces distribuées et Tempo sont hors périmètre.
-- `process_cpu_seconds_total` décrit le temps CPU consommé par le processus.
-  Ce n'est ni le CPU total du conteneur ni un pourcentage de sa limite.
-- A/B/C distinguent les faits horodatés, les hypothèses et les données absentes.
-  Une proximité temporelle ne prouve pas une cause. L'application ne réalise
-  aucune remédiation automatique.
-- Mistral est un service externe : le filtrage des données réduit certains
-  risques, mais ne constitue pas une anonymisation. N'envoyez que des données
-  autorisées par le groupe. Les tests n'effectuent aucun appel Mistral.
-- Le poste de développement dispose de 8 Go de RAM. Les mesures réellement
-  observées et les plafonds déclarés ne sont pas équivalents ; ne démarrez pas
-  de composants supplémentaires si le cluster ou Windows est sous pression.
-- Les événements Kubernetes ont une rétention limitée et les séries Mimir
-  dépendent de leur durée de rétention. Une absence de données n'est jamais
-  interprétée comme une valeur nulle ou un état sain.
-- Le déploiement cloud et Grafana ne sont pas déployés ; les alertes sont
-  abandonnées sur consigne du professeur. Les traces distribuées et Tempo sont
-  hors périmètre. Voir [`CONFORMITE-EXIGENCES.md`](CONFORMITE-EXIGENCES.md) et
-  [`docs/points-amelioration.md`](docs/points-amelioration.md).
+```powershell
+# Lecture seule : état des clusters, nœuds, volumes et coût estimé
+.\scripts\exoscale\status.ps1
 
-## Vérifier l'installation
+# Simulation, aucune ressource facturable
+.\scripts\exoscale\start.ps1 -DryRun
+.\scripts\exoscale\start.ps1 -Apply      # crée/scalie les Nodepools à 1
 
-Le lanceur `start` rend les manifests communs, les répartit entre les deux
-clusters, construit l'image d'agent, crée les Secrets, vérifie les services et
-ouvre le tunnel vers WebUI. Ne pas appliquer directement `kubectl apply -k k8s`
-pour cette topologie : cela installerait tous les composants dans un seul cluster.
-
-```bash
-kubectl --context kubeai-observed get pods -n applications
-kubectl --context kubeai-observed get pods -n collecte
-kubectl --context kubeai-supervision get pods -n kubeai
-kubectl --context kubeai-supervision get pods -n supervision
-python3 scripts/verify-demo-metrics.py
+# Arrêt après les démonstrations : Nodepools à 0, PVC conservés
+.\scripts\exoscale\stop.ps1 -DryRun
+.\scripts\exoscale\stop.ps1 -Apply
 ```
 
-La dernière commande s'utilise après la démo. Elle lit le pod dans le cluster
-observé et interroge Mimir/Loki dans le cluster de supervision. Pour des noms
-personnalisés, elle utilise la dernière topologie démarrée.
+`start.ps1 -Apply` et `stop.ps1 -Apply` sont des opérations **facturables** :
+elles demandent confirmation et ne suppriment jamais les PVC, volumes SBS,
+Secrets ou clusters. `bootstrap.ps1` est réservé à la création initiale de
+l'infrastructure ; ne pas le relancer sans vérifier `-DryRun`.
 
-## Secrets et authentification
+Le 3 novembre, vérifier l'adresse publique et le DNS **avant** la soutenance :
 
-Ne pas versionner `.env`, les clés API ou les kubeconfigs privés. `start` crée
-une clé Bearer commune à FastAPI et WebUI dans `kubeai-api-auth`, puis la conserve
-aux lancements suivants. La clé du fournisseur est transférée séparément dans
-`kubeai-llm` ou `kubeai-mistral`.
+```powershell
+.\scripts\exoscale\status.ps1
+Resolve-DnsName kubeai.anassndri.ch -Server 1.1.1.1
+curl.exe -I https://kubeai.anassndri.ch/
+```
 
-Le compte `kubeai-agent` du cluster observé peut uniquement lister les nœuds,
-pods et événements. Son jeton de 24 heures est renouvelé au démarrage et monté
-dans l'agent du cluster de supervision avec la CA du cluster observé. Aucun
-kubeconfig administrateur n'est copié. Voir [les détails réseau et RBAC](docs/two-clusters.md).
+Un redémarrage de Nodepool peut recréer le nœud public et changer son adresse
+IPv4. Si l'adresse change, mettre à jour l'enregistrement DNS `A` chez
+Infomaniak ; ne pas modifier les autres enregistrements. Voir
+[docs/exoscale/public-access.md](docs/exoscale/public-access.md).
 
-FastAPI tourne dans le cluster de supervision. Open WebUI lui parle via
-`http://kubeai-agent.kubeai.svc.cluster.local:8000/v1`. Le tunnel WebUI est limité
-à `127.0.0.1:8080` ; son journal est `.cache/two-clusters/webui-forward.log`.
+### Accès WebUI
 
-## Tests du backend
+Ouvrir <https://kubeai.anassndri.ch>, se connecter avec le compte local du
+groupe, puis sélectionner le modèle **kubeai**. L'inscription publique est
+désactivée. Les identifiants et kubeconfigs restent hors Git.
 
-Les tests automatisés utilisent des transports simulés ; aucun cluster,
-Secret ni appel Mistral réel n'est nécessaire. Les démonstrations A/B/C ont,
-elles, été exercées sur le cluster Docker Desktop avec le vrai fournisseur.
+## Utilisation et démonstrations
+
+Les questions ci-dessous sont les questions de référence. Elles fonctionnent
+sans ajouter « Answer in English » : la langue de la dernière question est
+détectée automatiquement.
+
+### A — santé globale
+
+```text
+Quel est l'état de santé de mon cluster ?
+```
+
+```text
+What is the current health status of my Kubernetes cluster?
+Check nodes, pods, restarts and recent alerts.
+```
+
+### B — chronologie d'incident
+
+```text
+Analyse l'incident du pod kubeai-demo-incident dans le namespace applications,
+le 29 octobre 2026 entre 09:08 et 09:13 UTC. Reconstitue la chronologie à partir
+des logs et métriques réellement disponibles.
+```
+
+```text
+Analyze the incident of pod kubeai-demo-incident in namespace applications on
+October 29, 2026 between 09:08 and 09:13 UTC. Reconstruct the chronology from
+available logs and metrics.
+```
+
+### C — corrélation
+
+```text
+Pour l'incident du pod kubeai-demo-incident dans le namespace applications, le
+29 octobre 2026 entre 09:08 et 09:13 UTC, corrèle les logs, le CPU, la latence
+et les erreurs HTTP. Propose des hypothèses de cause, classe-les par
+plausibilité et précise les preuves disponibles ainsi que ce qui reste à
+vérifier.
+```
+
+```text
+For the incident of pod kubeai-demo-incident in namespace applications on
+October 29, 2026 between 09:08 and 09:13 UTC, correlate logs, CPU, latency and
+HTTP errors. Propose hypotheses, rank them by plausibility, and state the
+available evidence and what remains to verify.
+```
+
+Conseils de démonstration :
+
+- ne pas redémarrer l'agent entre A, B et C : snapshots A `120 s`, B/C `300 s` ;
+- limite API : 30 requêtes/minute, burst 10 ; attendre en cas de HTTP 429 ;
+- A peut afficher `DEGRADED` à cause de deux pods Pending réels dans
+  `kube-system` ; ne pas masquer ce fait ;
+- les détails techniques sont fermés par défaut, puis ouverts par clic ;
+- F5 conserve le diagnostic mais referme le bloc de preuves.
+
+## Captures de démonstration
+
+Les 12 captures sont dans [docs/capture](docs/capture/) :
+
+| Fichier | Contenu |
+|---|---|
+| [00-public-https-login.png](docs/capture/00-public-https-login.png) | HTTPS public et authentification |
+| [01-exoscale-clusters.png](docs/capture/01-exoscale-clusters.png) | Deux clusters SKS |
+| [02-kubernetes-nodes-ready.png](docs/capture/02-kubernetes-nodes-ready.png) | Nœuds Ready |
+| [03-supervision-pods-running.png](docs/capture/03-supervision-pods-running.png) | Pile de supervision |
+| [04-kubernetes-pvc-bound.png](docs/capture/04-kubernetes-pvc-bound.png) | PVC liés |
+| [05-demo-a-health.png](docs/capture/05-demo-a-health.png) | A — santé |
+| [05-demo-a-health-with-detail.png](docs/capture/05-demo-a-health-with-detail.png) | A — preuves ouvertes |
+| [06-demo-b-timeline.png](docs/capture/06-demo-b-timeline.png) | B — chronologie |
+| [06-demo-b-timeline-with-detail.png](docs/capture/06-demo-b-timeline-with-detail.png) | B — preuves ouvertes |
+| [07-demo-c-correlation.png](docs/capture/07-demo-c-correlation.png) | C — corrélation |
+| [07-demo-c-correlation-with-detail.png](docs/capture/07-demo-c-correlation-with-detail.png) | C — preuves ouvertes |
+| [08-demo-english.png](docs/capture/08-demo-english.png) | Réponse anglaise |
+
+## Tests et validation
+
+```text
+441 tests agent passés
+0 test agent échoué
+```
+
+Commandes :
 
 ```powershell
 Set-Location .\agent
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
 ..\.venv\Scripts\python.exe -B -m pytest tests --ignore=tests/integration -q -p no:cacheprovider
-..\.venv\Scripts\python.exe -m compileall -q app tests
 ```
 
-Depuis la racine, `pytest` fonctionne aussi grâce au fichier [pytest.ini](pytest.ini)
-(`pythonpath = agent`) : `pytest agent/tests --ignore=agent/tests/integration`.
-La commande depuis `agent/` reste la référence.
+Validation des manifests :
 
-Les tests ignorés ou exclus ne doivent pas être déclarés réussis sans exécution.
-Pour les vérifications réelles des démonstrations, suivre le protocole de
-[`docs/demo-scenarios.md`](docs/demo-scenarios.md) dans un cluster autorisé.
+```powershell
+kubectl kustomize --load-restrictor=LoadRestrictionsNone k8s/overlays/exoscale/observed
+kubectl kustomize --load-restrictor=LoadRestrictionsNone k8s/overlays/exoscale/supervision
+```
 
-## Équipe et livrables
+Le rapport adversarial contient **62 PASS, 21 NOT_TESTED, 1 BLOCKED, 0 FAIL**
+sur les 84 scénarios. Ce n'est pas une certification des 84 scénarios : les
+tests non exécutés et T17 sont documentés honnêtement. La validation publique
+couvre HTTPS, authentification, A/B/C français et anglais, refus des écritures,
+streaming et composant dépliable.
 
-Le dépôt `kubeAI` est un travail collectif des **3 étudiants du groupe P5-G17**.
-La conception initiale est archivée dans
-[`docs/archive/Group-17-Architecture-initiale.pdf`](docs/archive/Group-17-Architecture-initiale.pdf) ;
-l’architecture livrée et validée est décrite dans
-[`docs/architecture.md`](docs/architecture.md). Le suivi des exigences du sujet
-et des points restants est dans
-[`CONFORMITE-EXIGENCES.md`](CONFORMITE-EXIGENCES.md).
+## Sécurité
+
+- L'agent Kubernetes utilise uniquement les verbes de lecture nécessaires
+  (`list` sur nœuds, pods et événements) ;
+- aucun outil d'écriture, de suppression, de scale ou de redémarrage n'est exposé ;
+- les demandes de modification sont refusées en français et en anglais ;
+- l'API et Open WebUI sont authentifiés ; l'inscription publique est fermée ;
+- aucun Secret, kubeconfig ou identifiant réel n'est versionné ; les fichiers
+  locaux restent sous `%USERPROFILE%\.kube\` et sont ignorés par Git ;
+- l'alerte Gitleaks `generic-api-key` du commit `5ce37c9` est un faux positif :
+  il s'agit de constantes de test `unit-secret-…` / `fake-…` sans valeur
+  d'authentification. Aucune vraie clé n'est présente dans le dépôt.
+
+## Limites et risques
+
+- Les fonctions d'alerte dédiée ne sont pas configurées : les avertissements
+  récents sont des **événements Kubernetes**, pas des notifications Alertmanager ;
+- l'inventaire des pods peut être `partial` ; les champs absents ne sont jamais
+  assimilés à un état sain ;
+- Mimir conserve les métriques sans purge par âge configurée, Loki 30 jours ;
+  préserver les PVC pour les captures ;
+- 21 scénarios de robustesse n'ont pas été exécutés et T17 (arrêt complet réel)
+  reste bloqué ; voir le rapport ;
+- un seul nœud par cluster : pas de haute disponibilité ;
+- l'IP publique et le DNS peuvent changer après recréation d'un nœud ;
+- l'adaptateur de preuves dépliables dépend de la version Open WebUI 0.12.5
+  (rendu CodeMirror) ; toute mise à jour doit être revalidée dans le navigateur ;
+- les tests automatisés utilisent des transports simulés ; ils ne remplacent pas
+  les démonstrations réelles.
+
+## Documentation utile
+
+- [Déploiement Exoscale](docs/exoscale/deployment.md)
+- [Accès public, DNS et Security Groups](docs/exoscale/public-access.md)
+- [Coûts et nettoyage](docs/exoscale/cost-and-cleanup.md)
+- [Scénarios de démonstration](docs/demo-scenarios.md)
+- [Architecture deux clusters](docs/two-clusters.md)
+- [Rapport adversarial final](docs/exoscale/evidence/adversarial-test-report.md)
+- [Health déterministe](docs/exoscale/evidence/deterministic-health.md)
+
+## Équipe
+
+Travail collectif des **3 étudiants du groupe P5-G17**. Le dépôt `kubeAI` est
+la livraison finale ; les contributions de chaque étudiant restent identifiables
+dans l'historique Git.
