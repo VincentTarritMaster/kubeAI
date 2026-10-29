@@ -1,0 +1,34 @@
+KubeAI - gestion d'erreurs - 2026-10-29
+
+Image active :
+docker.io/anassndri/kubeai-agent@sha256:4a1cf5272431310419487eb21cccdbbbb4fee64979435bc392ccf7e3880581d0
+
+Codes stables :
+LLM_INVALID_TOOL_CALL, LLM_AUTH, LLM_QUOTA, LLM_UNAVAILABLE,
+LLM_TIMEOUT, LLM_CONNECTION, UPSTREAM_TIMEOUT, K8S_FORBIDDEN,
+K8S_UNAVAILABLE, MIMIR_UNAVAILABLE, LOKI_UNAVAILABLE,
+UPSTREAM_UNAVAILABLE, INTERNAL_ERROR.
+
+Chaque erreur porte un diagnostic_id (kubeai-xxxxxxxxxxxx) repris dans les
+logs serveur et dans le message utilisateur.
+
+Exemples FR/EN vérifiés par les tests :
+- LLM_INVALID_TOOL_CALL : le modèle n'a pas interprété la demande ; JSON
+  invalide/incomplet ; aucune donnée Kubernetes modifiée.
+- MIMIR_UNAVAILABLE : métriques Mimir indisponibles ; diagnostic incomplet,
+  logs Loki éventuellement disponibles.
+- LOKI_UNAVAILABLE : logs indisponibles ; cause non confirmable.
+- K8S_FORBIDDEN : permissions du compte de service à vérifier.
+- UPSTREAM_TIMEOUT : délai dépassé ; diagnostic incomplet.
+
+Protocole :
+- KUBEAI_TOOL_PROTOCOL=json ;
+- parsing JSON tolérant aux fences Markdown mais strict sur les clés ;
+- budget de tokens des appels d'outils porté à 1024 ;
+- un retry explicite sur appel d'outil invalide ;
+- erreur SSE terminale avec code, message localisé et diagnostic_id ;
+- réponse non-streaming en HTTP 503 avec le même contrat ;
+- avertissement « Diagnostic partiel » ajouté quand une source a réellement
+  échoué (Mimir, Loki, Kubernetes ou métriques d'inventaire).
+
+Tests automatisés : 441 passed.
