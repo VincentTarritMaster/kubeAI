@@ -6,7 +6,7 @@ chronologie et de corrélation à partir de preuves datées provenant de
 Kubernetes, Mimir et Loki. Les faits sont calculés par du code déterministe ;
 le modèle ne peut ni inventer une ressource, ni modifier le cluster.
 
-- Démonstration publique : <https://kubeai.anassndri.ch>
+- Démonstration : <https://www.youtube.com/watch?v=EO6ep91FaQc> via https <https://kubeai.anassndri.ch> (exoscale coupé pour facturation)
 - Modèle exposé dans Open WebUI : `kubeai`
 - Rapport d'audit final : [docs/exoscale/evidence/adversarial-test-report.md](docs/exoscale/evidence/adversarial-test-report.md)
 
