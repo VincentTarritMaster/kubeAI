@@ -4,6 +4,12 @@ $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $script:ConfigPath = Join-Path $RepoRoot 'infra/exoscale/config.json'
 $script:Config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 
+# Profil CLI de déploiement (lecture, création/scale des Nodepools et
+# génération des kubeconfigs). Sans ce profil, la CLI utilise le compte par
+# défaut en lecture seule et `exo compute sks kubeconfig` est refusé par la
+# politique IAM. Un EXOSCALE_ACCOUNT déjà défini reste prioritaire.
+if (-not $env:EXOSCALE_ACCOUNT) { $env:EXOSCALE_ACCOUNT = 'kubeai-deployer' }
+
 function Invoke-ExoJson {
     param([string[]]$Arguments)
     $output = & exo @Arguments -O json 2>$null
@@ -67,9 +73,12 @@ function Get-ExoNodePool {
 
 function Get-NodePoolSize {
     param([string]$Cluster, [string]$NodePool)
-    $value = Get-ExoNodePool -Cluster $Cluster -NodePool $NodePool
-    if ($null -eq $value) { return 0 }
-    return [int]$value.size
+    # `nodepool show` peut être refusé par la politique du profil de
+    # déploiement ; `nodepool list` renvoie déjà la taille et reste autorisé.
+    $pools = @(Get-ExoNodePools -Cluster $Cluster)
+    $pool = $pools | Where-Object { $_.name -eq $NodePool } | Select-Object -First 1
+    if ($null -eq $pool) { return 0 }
+    return [int]$pool.size
 }
 
 function Get-EstimatedHourlyCost {
@@ -129,16 +138,29 @@ function Get-ExoResourceSnapshot {
     $snapshot = [ordered]@{
         Clusters = @()
         Instances = @()
+        InstanceCount = 0
         Volumes = @()
         LoadBalancers = @()
         PrivateNetworks = @()
         Limits = $null
     }
     try { $snapshot.Clusters = @(Get-ExoClusters) } catch { }
-    try { $snapshot.Instances = @(Invoke-ExoJson @('compute', 'instance', 'list', '--zone', $script:Config.zone)) } catch { }
+    try {
+        $snapshot.Instances = @(Invoke-ExoJson @('compute', 'instance', 'list', '--zone', $script:Config.zone))
+        $snapshot.InstanceCount = @($snapshot.Instances).Count
+    } catch { }
     try { $snapshot.Volumes = @(Invoke-ExoJson @('compute', 'block-storage', 'list', '--zone', $script:Config.zone)) } catch { }
     try { $snapshot.LoadBalancers = @(Invoke-ExoJson @('compute', 'load-balancer', 'list', '--zone', $script:Config.zone)) } catch { }
     try { $snapshot.PrivateNetworks = @(Invoke-ExoJson @('compute', 'private-network', 'list', '--zone', $script:Config.zone)) } catch { }
     try { $snapshot.Limits = Invoke-ExoJson @('limits') } catch { }
+    # Le profil de déploiement peut lister les quotas sans pouvoir enrichir
+    # chaque instance avec son type ; `limits` reste la source fiable du
+    # nombre d'instances facturées.
+    if ($snapshot.InstanceCount -eq 0 -and $null -ne $snapshot.Limits) {
+        $instanceQuota = @($snapshot.Limits) |
+            Where-Object { $_.resource -eq 'Compute instances' } |
+            Select-Object -First 1
+        if ($null -ne $instanceQuota) { $snapshot.InstanceCount = [int]$instanceQuota.used }
+    }
     return [pscustomobject]$snapshot
 }

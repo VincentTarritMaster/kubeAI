@@ -48,7 +48,7 @@ if ($missing.Count) {
     Write-Warning ("Clusters SKS absents : " + (($missing | ForEach-Object Name) -join ', '))
     Write-Host 'Aucun cluster ne sera créé automatiquement ; voir infra/exoscale/README.md.'
 }
-Write-Host ("Instances Compute : {0}" -f @($snapshot.Instances).Count)
+Write-Host ("Instances Compute : {0}" -f $snapshot.InstanceCount)
 Write-Host ("Volumes SBS : {0}" -f @($snapshot.Volumes).Count)
 Write-Host ("Load Balancers : {0}" -f @($snapshot.LoadBalancers).Count)
 Write-Host ("Réseaux privés : {0}" -f @($snapshot.PrivateNetworks).Count)

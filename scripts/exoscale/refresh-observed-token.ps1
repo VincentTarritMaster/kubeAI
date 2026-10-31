@@ -50,5 +50,10 @@ $json = $secret | ConvertTo-Json -Depth 20 -Compress
 $json | kubectl --context $SupervisionContext apply -f -
 if ($LASTEXITCODE -ne 0) { throw "Mise à jour du Secret impossible." }
 Write-Host "Secret kubeai-observed-kubeconfig mis à jour."
-Write-Host "Redémarrer l'agent pour charger le nouveau kubeconfig :"
-Write-Host "kubectl --context $SupervisionContext -n kubeai rollout restart deployment/kubeai-agent"
+# Le kubeconfig est lu au démarrage de l'agent : sans redémarrage, le jeton
+# précédent resterait chargé jusqu'à son expiration.
+Write-Host "Redémarrage de l'agent pour charger le nouveau kubeconfig..."
+& kubectl --context $SupervisionContext -n kubeai rollout restart deployment/kubeai-agent
+if ($LASTEXITCODE -ne 0) { throw "Redémarrage de l'agent impossible." }
+& kubectl --context $SupervisionContext -n kubeai rollout status deployment/kubeai-agent --timeout=180s
+if ($LASTEXITCODE -ne 0) { throw "L'agent n'est pas redevenu prêt après le renouvellement." }

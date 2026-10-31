@@ -70,7 +70,7 @@ if (-not $stopped) {
 }
 
 $snapshot = Get-ExoResourceSnapshot
-$instanceCount = @($snapshot.Instances).Count
+$instanceCount = $snapshot.InstanceCount
 Write-Host ''
 Write-Host 'Ressources encore présentes (facturation possible) :'
 Write-Host ("Clusters SKS : {0}" -f @($snapshot.Clusters).Count)
