@@ -9,6 +9,7 @@ le modèle ne peut ni inventer une ressource, ni modifier le cluster.
 - Démonstration : <https://www.youtube.com/watch?v=EO6ep91FaQc> via https <https://kubeai.anassndri.ch> (exoscale coupé pour facturation)
 - Modèle exposé dans Open WebUI : `kubeai`
 - Rapport d'audit final : [docs/exoscale/evidence/adversarial-test-report.md](docs/exoscale/evidence/adversarial-test-report.md)
+- Rapport final : [docs/rapport/Rapport_P5-G17_KubeAI.pdf](docs/rapport/Rapport_P5-G17_KubeAI.pdf)
 
 ## Architecture livrée
 
