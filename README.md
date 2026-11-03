@@ -241,5 +241,4 @@ streaming et composant dépliable.
 ## Équipe
 
 Travail collectif des **3 étudiants du groupe P5-G17**. Le dépôt `kubeAI` est
-la livraison finale ; les contributions de chaque étudiant restent identifiables
-dans l'historique Git.
+la livraison finale.
